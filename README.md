@@ -11,6 +11,7 @@ Application web locale de gestion des pièces de rechange (motos, vélos, voitur
 - Comptes utilisateurs : création par l'administrateur, rôles Administrateur/Employé et suppression protégée.
 - Achats & réceptions : enregistrement des achats par fournisseur, coût d'achat, mise à jour du stock, historique et mouvements automatiques.
 - Ventes multi-articles : contrôle du stock, liaison aux clients enregistrés, facture, historique et décrémentation atomique.
+- Paiements de factures : acomptes et paiements partiels, modes Espèces/Mobile Money/Banque/Carte, historique des règlements, solde restant et statut À crédit/Partiellement payée/Payée. Les paiements supérieurs au solde sont refusés.
 - Alertes lorsque quantité <= seuil minimum.
 - Interface responsive reprenant la maquette StockPro (bleu marine, jaune, cartes colorées et menu latéral).
 
