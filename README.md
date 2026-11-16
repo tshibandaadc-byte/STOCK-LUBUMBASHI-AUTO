@@ -6,8 +6,9 @@ Application web locale de gestion des pièces de rechange (motos, vélos, voitur
 - Connexion avec mot de passe haché et session.
 - Tableau de bord avec statistiques calculées depuis la base.
 - Gestion des pièces : ajout, modification, suppression protégée et recherche.
-- Entrées et sorties de stock avec contrôle des quantités.
-- Clients : création et consultation.
+- Entrées et sorties de stock avec contrôle des quantités et historique d'inventaire (250 dernières opérations).
+- Clients : création, consultation, modification et suppression protégée.
+- Comptes utilisateurs : création par l'administrateur, rôles Administrateur/Employé et suppression protégée.
 - Ventes multi-articles : contrôle du stock, facture, historique et décrémentation atomique.
 - Alertes lorsque quantité <= seuil minimum.
 - Interface responsive reprenant la maquette StockPro (bleu marine, jaune, cartes colorées et menu latéral).
