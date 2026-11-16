@@ -40,6 +40,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, reference TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id), supplier_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
     CREATE TABLE IF NOT EXISTS purchase_items(id INTEGER PRIMARY KEY, purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0), unit_cost REAL NOT NULL CHECK(unit_cost>=0));
     CREATE TABLE IF NOT EXISTS sale_payments(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, amount REAL NOT NULL CHECK(amount>0), method TEXT NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS purchase_payments(id INTEGER PRIMARY KEY, purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE, amount REAL NOT NULL CHECK(amount>0), method TEXT NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS expenses(id INTEGER PRIMARY KEY, category TEXT NOT NULL, description TEXT NOT NULL, amount REAL NOT NULL CHECK(amount>0), currency TEXT NOT NULL CHECK(currency IN ('USD','CDF')), method TEXT NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
     """)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         conn.execute("INSERT INTO users(username,password_hash) VALUES(?,?)", ("admin", generate_password_hash(os.environ.get("ADMIN_PASSWORD","Admin@12345"))))
@@ -406,7 +408,72 @@ def purchase_detail(purchase_id):
         return jsonify(ok=False, message="Achat introuvable."), 404
     items = conn.execute("SELECT product_name,quantity,unit_cost,quantity*unit_cost AS subtotal FROM purchase_items WHERE purchase_id=? ORDER BY id",
                          (purchase_id,)).fetchall()
-    return jsonify(purchase=dict(purchase), items=[dict(item) for item in items])
+    payments = conn.execute("SELECT id,amount,method,note,user,created_at FROM purchase_payments WHERE purchase_id=? ORDER BY id", (purchase_id,)).fetchall()
+    paid = round(sum(float(row["amount"]) for row in payments), 2)
+    total = round(float(purchase["total"]), 2)
+    balance = round(max(0, total-paid), 2)
+    status = "Payé" if balance == 0 else ("Partiellement payé" if paid > 0 else "À payer")
+    return jsonify(purchase=dict(purchase), items=[dict(item) for item in items],
+                   payments=[dict(row) for row in payments],
+                   payment_summary={"paid_amount":paid,"balance":balance,"status":status})
+
+@app.route("/api/purchases/<int:purchase_id>/payments", methods=["GET","POST"])
+@login_required
+def purchase_payments(purchase_id):
+    conn=db()
+    purchase=conn.execute("SELECT id,total FROM purchases WHERE id=?",(purchase_id,)).fetchone()
+    if not purchase: return jsonify(ok=False,message="Achat introuvable."),404
+    if request.method=="GET":
+        rows=conn.execute("SELECT id,amount,method,note,user,created_at FROM purchase_payments WHERE purchase_id=? ORDER BY id",(purchase_id,)).fetchall()
+        paid=round(sum(float(x["amount"]) for x in rows),2); total=round(float(purchase["total"]),2); balance=round(max(0,total-paid),2)
+        return jsonify(payments=[dict(x) for x in rows],summary={"paid_amount":paid,"balance":balance,"status":"Payé" if balance==0 else ("Partiellement payé" if paid>0 else "À payer")})
+    data=request.get_json(silent=True) or {}
+    try:
+        amount=float(data.get("amount",0)); method=str(data.get("method","Espèces")).strip(); note=str(data.get("note","")).strip()
+        if not math.isfinite(amount) or amount<=0 or method not in ("Espèces","Mobile Money","Banque","Carte"): raise ValueError()
+        amount=round(amount,2); conn.execute("BEGIN IMMEDIATE")
+        paid=float(conn.execute("SELECT COALESCE(SUM(amount),0) AS paid FROM purchase_payments WHERE purchase_id=?",(purchase_id,)).fetchone()["paid"])
+        total=round(float(conn.execute("SELECT total FROM purchases WHERE id=?",(purchase_id,)).fetchone()["total"]),2)
+        if amount>round(total-paid,2)+0.000001:
+            conn.rollback(); return jsonify(ok=False,message="Ce règlement dépasse le solde restant."),400
+        conn.execute("INSERT INTO purchase_payments(purchase_id,amount,method,note,user,created_at) VALUES(?,?,?,?,?,?)",(purchase_id,amount,method,note,session["user"],stamp()))
+        conn.commit(); new_paid=round(paid+amount,2); balance=round(max(0,total-new_paid),2)
+        return jsonify(ok=True,message="Règlement fournisseur enregistré.",paid_amount=new_paid,balance=balance),201
+    except (ValueError,TypeError,sqlite3.IntegrityError):
+        conn.rollback(); return jsonify(ok=False,message="Montant ou mode de règlement invalide."),400
+
+
+@app.route("/api/expenses", methods=["GET","POST"])
+@login_required
+def expenses_api():
+    conn=db()
+    if request.method=="GET":
+        rows=conn.execute("SELECT * FROM expenses ORDER BY id DESC LIMIT 300").fetchall()
+        totals=conn.execute("SELECT currency,ROUND(SUM(amount),2) AS total,COUNT(*) AS count FROM expenses GROUP BY currency").fetchall()
+        return jsonify(expenses=[dict(x) for x in rows],totals=[dict(x) for x in totals])
+    data=request.get_json(silent=True) or {}
+    category=str(data.get("category","")).strip(); description=str(data.get("description","")).strip()
+    currency=data.get("currency","USD"); method=str(data.get("method","Espèces")).strip(); note=str(data.get("note","")).strip()
+    try:
+        amount=float(data.get("amount",0))
+        if not category or not description or not math.isfinite(amount) or amount<=0 or currency not in ("USD","CDF") or method not in ("Espèces","Mobile Money","Banque","Carte"):
+            raise ValueError()
+        conn.execute("INSERT INTO expenses(category,description,amount,currency,method,note,user,created_at) VALUES(?,?,?,?,?,?,?,?)",(category,description,round(amount,2),currency,method,note,session["user"],stamp()))
+        conn.commit()
+        return jsonify(ok=True,message="Dépense enregistrée."),201
+    except (ValueError,TypeError,sqlite3.IntegrityError):
+        conn.rollback(); return jsonify(ok=False,message="Vérifiez la catégorie, la description, le montant, la devise et le mode de paiement."),400
+
+
+@app.delete("/api/expenses/<int:expense_id>")
+@login_required
+def expense_delete(expense_id):
+    conn=db()
+    cur=conn.execute("DELETE FROM expenses WHERE id=?",(expense_id,))
+    conn.commit()
+    if not cur.rowcount: return jsonify(ok=False,message="Dépense introuvable."),404
+    return jsonify(ok=True,message="Dépense supprimée.")
+
 
 @app.route("/api/suppliers", methods=["GET","POST"])
 @login_required
