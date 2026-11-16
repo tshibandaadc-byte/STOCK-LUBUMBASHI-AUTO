@@ -117,6 +117,8 @@ def products_list():
 @app.post("/api/products")
 @login_required
 def product_create():
+    denied = admin_required()
+    if denied: return denied
     d=request.get_json(silent=True) or request.form
     try:
         quantity=whole_number(d.get("quantity",0)); minimum=whole_number(d.get("min_stock",5))
@@ -133,6 +135,8 @@ def product_create():
 @app.route("/api/products/<int:pid>",methods=["PUT","DELETE"])
 @login_required
 def product_detail(pid):
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     row=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
     if not row: return jsonify(ok=False,message="Pièce introuvable."),404
@@ -172,6 +176,9 @@ def product_detail(pid):
 @app.route("/api/movements", methods=["GET", "POST"])
 @login_required
 def movement():
+    if request.method == 'POST':
+        denied = admin_required()
+        if denied: return denied
     if request.method == "GET":
         rows = db().execute("SELECT m.*,p.sku,p.name AS product_name FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 250").fetchall()
         return jsonify([dict(row) for row in rows])
@@ -325,6 +332,8 @@ def sales_list():
 @app.route("/api/customers/<int:cid>", methods=["PUT","DELETE"])
 @login_required
 def customer_detail(cid):
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     if not conn.execute("SELECT id FROM customers WHERE id=?",(cid,)).fetchone():
         return jsonify(ok=False,message="Client introuvable."),404
@@ -341,6 +350,9 @@ def customer_detail(cid):
 @app.route("/api/purchases", methods=["GET", "POST"])
 @login_required
 def purchases_api():
+    if request.method == 'POST':
+        denied = admin_required()
+        if denied: return denied
     conn = db()
     if request.method == "GET":
         rows = conn.execute("SELECT * FROM purchases ORDER BY id DESC LIMIT 100").fetchall()
@@ -446,6 +458,8 @@ def purchase_payments(purchase_id):
 @app.route("/api/expenses", methods=["GET","POST"])
 @login_required
 def expenses_api():
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     if request.method=="GET":
         rows=conn.execute("SELECT * FROM expenses ORDER BY id DESC LIMIT 300").fetchall()
@@ -468,6 +482,8 @@ def expenses_api():
 @app.delete("/api/expenses/<int:expense_id>")
 @login_required
 def expense_delete(expense_id):
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     cur=conn.execute("DELETE FROM expenses WHERE id=?",(expense_id,))
     conn.commit()
@@ -478,6 +494,8 @@ def expense_delete(expense_id):
 @app.route("/api/suppliers", methods=["GET","POST"])
 @login_required
 def suppliers_api():
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     if request.method=="GET": return jsonify([dict(x) for x in conn.execute("SELECT * FROM suppliers ORDER BY name")])
     d=request.get_json() or {}; name=d.get("name","").strip()
@@ -488,6 +506,8 @@ def suppliers_api():
 @app.route("/api/suppliers/<int:sid>", methods=["PUT","DELETE"])
 @login_required
 def supplier_detail(sid):
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     if not conn.execute("SELECT id FROM suppliers WHERE id=?",(sid,)).fetchone(): return jsonify(ok=False,message="Fournisseur introuvable."),404
     if request.method=="DELETE":
@@ -500,6 +520,8 @@ def supplier_detail(sid):
 @app.get("/api/finance/summary")
 @login_required
 def finance_summary():
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     result={}
     for currency in ("USD","CDF"):
@@ -528,6 +550,8 @@ def finance_summary():
 @app.get("/api/reports")
 @login_required
 def reports_api():
+    denied = admin_required()
+    if denied: return denied
     conn=db()
     monthly=conn.execute("SELECT substr(created_at,1,7) month,currency,ROUND(SUM(total),2) total,COUNT(*) count FROM sales GROUP BY month,currency ORDER BY month DESC LIMIT 24").fetchall()
     categories=conn.execute("SELECT category,COUNT(*) products,SUM(quantity) quantity FROM products GROUP BY category ORDER BY quantity DESC").fetchall()
@@ -547,6 +571,8 @@ def change_password():
 @app.get("/api/export/products.csv")
 @login_required
 def export_products():
+    denied = admin_required()
+    if denied: return denied
     rows = db().execute("SELECT sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,supplier FROM products ORDER BY category,name").fetchall()
     output = io.StringIO()
     writer = csv.writer(output, delimiter=";")
