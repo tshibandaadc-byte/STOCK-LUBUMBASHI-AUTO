@@ -12,7 +12,7 @@ Application web locale de gestion des pièces de rechange (motos, vélos, voitur
 - Achats & réceptions : enregistrement des achats par fournisseur, coût d'achat, mise à jour du stock, historique et mouvements automatiques.
 - Règlements fournisseurs : acomptes, paiements partiels ou complets, historique par achat, solde restant et blocage des règlements supérieurs au montant dû.
 - Dépenses & charges : enregistrement par catégorie, description, montant, devise USD/CDF, mode de paiement et note; consultation des totaux séparés par devise et suppression d'une saisie erronée.
-- Tableau de bord financier : ventes facturées, encaissements, créances clients, achats, règlements fournisseurs, dettes et dépenses, avec calculs séparés en USD et CDF. Le solde net présenté est un indicateur des flux saisis, pas un rapprochement bancaire.
+- Tableau de bord financier : ventes facturées, encaissements, créances clients, achats, règlements fournisseurs, dettes et dépenses, avec calculs séparés en USD et CDF. Le solde net présenté est un indicateur des flux saisis, pas un rapprochement bancaire.\n- Sauvegarde SQLite téléchargeable et restauration réservées à l'administrateur; la restauration contrôle l'intégrité et la structure avant remplacement de la base.
 - Ventes multi-articles : contrôle du stock, liaison aux clients enregistrés, facture, historique et décrémentation atomique.
 - Paiements de factures : acomptes et paiements partiels, modes Espèces/Mobile Money/Banque/Carte, historique des règlements, solde restant et statut À crédit/Partiellement payée/Payée. Les paiements supérieurs au solde sont refusés.
 - Alertes lorsque quantité <= seuil minimum.
@@ -44,7 +44,7 @@ Si PowerShell bloque l'activation : `Set-ExecutionPolicy -Scope Process -Executi
 - Le scanner QR utilise BarcodeDetector sur les navigateurs compatibles (Chrome/Edge récents) et nécessite l'autorisation caméra; sinon rechercher la référence manuellement.
 - Les fournisseurs disposent d'une fiche simple; les rapports restent synthétiques. Les rôles Administrateur/Employé couvrent la gestion de base des comptes.
 - Le compte initial est un compte de démarrage; l'application n'est pas encore configurée pour une exposition publique sur Internet.
-- Sauvegarder régulièrement `stockpro.db`. Utiliser HTTPS, une clé secrète forte, un mot de passe unique et un serveur WSGI avant toute mise en production.
+- Télécharger régulièrement une sauvegarde depuis `/api/backup` (session Administrateur), conserver plusieurs copies hors du serveur et tester la restauration via `/api/backup/restore` avant mise à jour importante. La restauration remplace les données courantes par celles de la sauvegarde. Utiliser HTTPS, une clé secrète forte, un mot de passe unique et un serveur WSGI avant toute mise en production.
 
 ## Vérification
 L'endpoint `/health` renvoie un statut JSON. L'application initialise automatiquement ses tables et un petit jeu de démonstration au premier lancement uniquement.
