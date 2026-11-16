@@ -122,6 +122,23 @@ class StockProTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(any(row["note"] == "Réception fournisseur" for row in response.get_json()))
 
+    def test_stock_quantities_must_be_whole_numbers(self):
+        product = self.client.get("/api/products").get_json()[0]
+        response = self.client.post("/api/movements", json={
+            "product_id": product["id"], "quantity": 1.5, "kind": "Entrée"
+        })
+        self.assertEqual(response.status_code, 400)
+        unchanged = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
+        self.assertEqual(unchanged["quantity"], product["quantity"])
+
+    def test_product_rejects_non_finite_prices(self):
+        response = self.client.post("/api/products", json={
+            "sku": "NAN-001", "name": "Prix invalide", "category": "Test",
+            "quantity": 1, "min_stock": 0, "purchase_price": float("nan"),
+            "sale_price": 5, "currency": "USD"
+        })
+        self.assertEqual(response.status_code, 400)
+
     def test_prevent_negative_stock(self):
         product = self.client.get("/api/products").get_json()[0]
         response = self.client.post("/api/movements", json={
