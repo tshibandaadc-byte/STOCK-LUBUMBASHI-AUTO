@@ -55,6 +55,11 @@ def login_required(fn):
 
 def stamp(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+def admin_required():
+    if session.get("role") not in ("Administrateur", "Admin"):
+        return jsonify(ok=False, message="Accès réservé à l'administrateur."), 403
+    return None
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method=="POST":
@@ -276,6 +281,44 @@ def change_password():
     if not user or not check_password_hash(user["password_hash"],old): return jsonify(ok=False,message="Mot de passe actuel incorrect."),400
     conn.execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(new),user["id"])); conn.commit()
     return jsonify(ok=True,message="Mot de passe modifie.")
+
+@app.route("/api/users", methods=["GET", "POST"])
+@login_required
+def users_api():
+    denied = admin_required()
+    if denied: return denied
+    conn = db()
+    if request.method == "GET":
+        return jsonify([dict(row) for row in conn.execute("SELECT id,username,role FROM users ORDER BY username")])
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    role = data.get("role", "Employé")
+    if len(username) < 3 or len(password) < 12 or role not in ("Administrateur", "Employé"):
+        return jsonify(ok=False, message="Identifiant (3 caractères), mot de passe (12 caractères) ou rôle invalide."), 400
+    try:
+        conn.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)",
+                     (username, generate_password_hash(password), role))
+        conn.commit()
+        return jsonify(ok=True, message="Utilisateur créé.")
+    except sqlite3.IntegrityError:
+        return jsonify(ok=False, message="Cet identifiant existe déjà."), 409
+
+@app.delete("/api/users/<int:user_id>")
+@login_required
+def user_delete(user_id):
+    denied = admin_required()
+    if denied: return denied
+    conn = db()
+    user = conn.execute("SELECT id,username FROM users WHERE id=?", (user_id,)).fetchone()
+    if not user: return jsonify(ok=False, message="Utilisateur introuvable."), 404
+    if user["username"] == session["user"]:
+        return jsonify(ok=False, message="Vous ne pouvez pas supprimer votre propre compte."), 400
+    if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] <= 1:
+        return jsonify(ok=False, message="Le dernier compte ne peut pas être supprimé."), 400
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    return jsonify(ok=True, message="Utilisateur supprimé.")
 
 @app.route("/health")
 def health(): return jsonify(status="ok",application="StockPro Moto-Auto")
