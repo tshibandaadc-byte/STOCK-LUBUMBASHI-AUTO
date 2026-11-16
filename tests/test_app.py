@@ -299,6 +299,36 @@ class StockProTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertEqual(len(self.client.get("/api/expenses").get_json()["expenses"]), 0)
 
+    def test_finance_summary_separates_currencies_and_tracks_balances(self):
+        product = self.client.get("/api/products").get_json()[0]
+        sale_response = self.client.post("/api/sales", json={
+            "customer": "Client tableau financier", "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        self.assertEqual(sale_response.status_code, 201)
+        sale_id = self.client.get("/api/sales").get_json()[0]["id"]
+        sale_total = float(self.client.get("/api/sales/" + str(sale_id)).get_json()["sale"]["total"])
+        self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
+            "amount": round(sale_total / 2, 2), "method": "Espèces"
+        })
+        self.client.post("/api/expenses", json={
+            "category": "Transport", "description": "Frais USD",
+            "amount": 10, "currency": product["currency"], "method": "Espèces"
+        })
+        other_currency = "CDF" if product["currency"] == "USD" else "USD"
+        self.client.post("/api/expenses", json={
+            "category": "Autre", "description": "Frais autre devise",
+            "amount": 7000, "currency": other_currency, "method": "Banque"
+        })
+        summary = self.client.get("/api/finance/summary")
+        self.assertEqual(summary.status_code, 200)
+        data = summary.get_json()["currencies"]
+        self.assertEqual(data[product["currency"]]["sales_count"], 1)
+        self.assertEqual(data[product["currency"]]["received"], round(sale_total / 2, 2))
+        self.assertGreater(data[product["currency"]]["receivables"], 0)
+        self.assertEqual(data[product["currency"]]["expenses_total"], 10)
+        self.assertEqual(data[other_currency]["expenses_total"], 7000)
+
     def test_supplier_create_and_reports(self):
         response = self.client.post("/api/suppliers", json={"name": "Fournisseur test"})
         self.assertEqual(response.status_code, 200)
