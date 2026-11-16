@@ -278,5 +278,52 @@ class StockProTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
 
+    def test_invoice_partial_and_full_payments(self):
+        product = self.client.get("/api/products").get_json()[0]
+        created = self.client.post("/api/sales", json={
+            "customer": "Client paiement", "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        sale = self.client.get("/api/sales").get_json()[0]
+        sale_id = sale["id"]
+        total = float(sale["total"])
+        first = round(total / 2, 2)
+        response = self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
+            "amount": first, "method": "Mobile Money", "note": "Acompte"
+        })
+        self.assertEqual(response.status_code, 201)
+        detail = self.client.get("/api/sales/" + str(sale_id)).get_json()
+        self.assertEqual(detail["payment_summary"]["status"], "Partiellement payée")
+        self.assertEqual(len(detail["payments"]), 1)
+        remaining = detail["payment_summary"]["balance"]
+        if remaining > 0:
+            final = self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
+                "amount": remaining, "method": "Espèces"
+            })
+            self.assertEqual(final.status_code, 201)
+        detail = self.client.get("/api/sales/" + str(sale_id)).get_json()
+        self.assertEqual(detail["payment_summary"]["balance"], 0)
+        self.assertEqual(detail["payment_summary"]["status"], "Payée")
+
+    def test_invoice_payment_rejects_overpayment_and_invalid_values(self):
+        product = self.client.get("/api/products").get_json()[0]
+        self.client.post("/api/sales", json={
+            "customer": "Client paiement", "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        sale_id = self.client.get("/api/sales").get_json()[0]["id"]
+        total = float(self.client.get("/api/sales/" + str(sale_id)).get_json()["sale"]["total"])
+        over = self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
+            "amount": total + 1, "method": "Espèces"
+        })
+        self.assertEqual(over.status_code, 400)
+        invalid = self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
+            "amount": -5, "method": "Crypto"
+        })
+        self.assertEqual(invalid.status_code, 400)
+        listing = self.client.get("/api/sales/" + str(sale_id) + "/payments")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.get_json()["summary"]["paid_amount"], 0)
+
 if __name__ == "__main__":
     unittest.main()
