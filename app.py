@@ -39,6 +39,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL);\n    CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '', email TEXT DEFAULT '', address TEXT DEFAULT '', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, reference TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id), supplier_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
     CREATE TABLE IF NOT EXISTS purchase_items(id INTEGER PRIMARY KEY, purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0), unit_cost REAL NOT NULL CHECK(unit_cost>=0));
+    CREATE TABLE IF NOT EXISTS sale_payments(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, amount REAL NOT NULL CHECK(amount>0), method TEXT NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
     """)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         conn.execute("INSERT INTO users(username,password_hash) VALUES(?,?)", ("admin", generate_password_hash(os.environ.get("ADMIN_PASSWORD","Admin@12345"))))
@@ -260,7 +261,57 @@ def sale_detail(sale_id):
         "SELECT product_name, quantity, unit_price, quantity*unit_price AS subtotal "
         "FROM sale_items WHERE sale_id=? ORDER BY id", (sale_id,)
     ).fetchall()
-    return jsonify(sale=dict(sale), items=[dict(item) for item in items])
+    payments = conn.execute("SELECT id, amount, method, note, user, created_at FROM sale_payments WHERE sale_id=? ORDER BY id", (sale_id,)).fetchall()
+    paid = round(sum(float(payment["amount"]) for payment in payments), 2)
+    total = round(float(sale["total"]), 2)
+    balance = round(max(0, total - paid), 2)
+    status = "Payée" if balance == 0 else ("Partiellement payée" if paid > 0 else "À crédit")
+    return jsonify(sale=dict(sale), items=[dict(item) for item in items],
+                   payments=[dict(payment) for payment in payments],
+                   payment_summary={"paid_amount": paid, "balance": balance, "status": status})
+
+
+@app.route("/api/sales/<int:sale_id>/payments", methods=["GET", "POST"])
+@login_required
+def sale_payments(sale_id):
+    conn = db()
+    sale = conn.execute("SELECT id, total FROM sales WHERE id=?", (sale_id,)).fetchone()
+    if not sale:
+        return jsonify(ok=False, message="Facture introuvable."), 404
+    if request.method == "GET":
+        rows = conn.execute("SELECT id, amount, method, note, user, created_at FROM sale_payments WHERE sale_id=? ORDER BY id", (sale_id,)).fetchall()
+        paid = round(sum(float(row["amount"]) for row in rows), 2)
+        total = round(float(sale["total"]), 2)
+        balance = round(max(0, total-paid), 2)
+        status = "Payée" if balance == 0 else ("Partiellement payée" if paid > 0 else "À crédit")
+        return jsonify(payments=[dict(row) for row in rows],
+                       summary={"paid_amount": paid, "balance": balance, "status": status})
+    data = request.get_json(silent=True) or {}
+    try:
+        amount = float(data.get("amount", 0))
+        method = str(data.get("method", "Espèces")).strip()
+        note = str(data.get("note", "")).strip()
+        if not math.isfinite(amount) or amount <= 0 or method not in ("Espèces", "Mobile Money", "Banque", "Carte"):
+            raise ValueError("Montant ou mode de paiement invalide.")
+        amount = round(amount, 2)
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute("SELECT total FROM sales WHERE id=?", (sale_id,)).fetchone()
+        paid_row = conn.execute("SELECT COALESCE(SUM(amount),0) AS paid FROM sale_payments WHERE sale_id=?", (sale_id,)).fetchone()
+        paid = round(float(paid_row["paid"]), 2)
+        total = round(float(current["total"]), 2)
+        if amount > round(total-paid, 2) + 0.000001:
+            conn.rollback()
+            return jsonify(ok=False, message="Ce paiement dépasse le solde restant."), 400
+        conn.execute("INSERT INTO sale_payments(sale_id,amount,method,note,user,created_at) VALUES(?,?,?,?,?,?)",
+                     (sale_id, amount, method, note, session["user"], stamp()))
+        conn.commit()
+        new_paid = round(paid+amount, 2)
+        balance = round(max(0, total-new_paid), 2)
+        status = "Payée" if balance == 0 else "Partiellement payée"
+        return jsonify(ok=True, message="Paiement enregistré.", paid_amount=new_paid, balance=balance, status=status), 201
+    except (ValueError, TypeError, sqlite3.IntegrityError):
+        conn.rollback()
+        return jsonify(ok=False, message="Montant ou mode de paiement invalide."), 400
 
 
 @app.get("/api/sales")
