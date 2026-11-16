@@ -48,3 +48,10 @@ Si PowerShell bloque l'activation : `Set-ExecutionPolicy -Scope Process -Executi
 
 ## Vérification
 L'endpoint `/health` renvoie un statut JSON. L'application initialise automatiquement ses tables et un petit jeu de démonstration au premier lancement uniquement.
+
+
+### Permissions
+
+- Administrateur : gestion des articles et ajustements de stock, achats/réceptions, fournisseurs, dépenses, utilisateurs, rapports, exports et tableau financier.
+- Employé : consultation opérationnelle et création des ventes, avec enregistrement des paiements clients. Les opérations d'administration et les données financières sont refusées côté serveur avec HTTP 403.
+- Le changement de mot de passe reste disponible à chaque utilisateur connecté.
