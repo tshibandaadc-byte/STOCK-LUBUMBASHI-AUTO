@@ -497,6 +497,34 @@ def supplier_detail(sid):
     conn.execute("UPDATE suppliers SET name=?,phone=?,email=?,address=? WHERE id=?",(name,d.get("phone",""),d.get("email",""),d.get("address",""),sid)); conn.commit()
     return jsonify(ok=True)
 
+@app.get("/api/finance/summary")
+@login_required
+def finance_summary():
+    conn=db()
+    result={}
+    for currency in ("USD","CDF"):
+        sales=conn.execute("SELECT COALESCE(SUM(total),0) total,COUNT(*) count FROM sales WHERE currency=?",(currency,)).fetchone()
+        collected=conn.execute("SELECT COALESCE(SUM(p.amount),0) total FROM sale_payments p JOIN sales s ON s.id=p.sale_id WHERE s.currency=?",(currency,)).fetchone()["total"]
+        purchases=conn.execute("SELECT COALESCE(SUM(total),0) total,COUNT(*) count FROM purchases WHERE currency=?",(currency,)).fetchone()
+        supplier_paid=conn.execute("SELECT COALESCE(SUM(p.amount),0) total FROM purchase_payments p JOIN purchases a ON a.id=p.purchase_id WHERE a.currency=?",(currency,)).fetchone()["total"]
+        expenses=conn.execute("SELECT COALESCE(SUM(amount),0) total,COUNT(*) count FROM expenses WHERE currency=?",(currency,)).fetchone()
+        sales_total=round(float(sales["total"]),2)
+        received=round(float(collected),2)
+        purchase_total=round(float(purchases["total"]),2)
+        paid_suppliers=round(float(supplier_paid),2)
+        expense_total=round(float(expenses["total"]),2)
+        result[currency]={
+            "sales_total":sales_total,"sales_count":sales["count"],
+            "received":received,"receivables":round(max(0,sales_total-received),2),
+            "purchases_total":purchase_total,"purchases_count":purchases["count"],
+            "supplier_paid":paid_suppliers,"payables":round(max(0,purchase_total-paid_suppliers),2),
+            "expenses_total":expense_total,
+            "cash_balance":round(received-paid_suppliers-expense_total,2)
+        }
+    recent_expenses=conn.execute("SELECT category,description,amount,currency,created_at FROM expenses ORDER BY id DESC LIMIT 5").fetchall()
+    return jsonify(currencies=result,recent_expenses=[dict(x) for x in recent_expenses])
+
+
 @app.get("/api/reports")
 @login_required
 def reports_api():
