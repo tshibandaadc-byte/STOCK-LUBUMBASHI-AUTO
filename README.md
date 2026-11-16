@@ -12,6 +12,7 @@ Application web locale de gestion des pièces de rechange (motos, vélos, voitur
 - Achats & réceptions : enregistrement des achats par fournisseur, coût d'achat, mise à jour du stock, historique et mouvements automatiques.
 - Règlements fournisseurs : acomptes, paiements partiels ou complets, historique par achat, solde restant et blocage des règlements supérieurs au montant dû.
 - Dépenses & charges : enregistrement par catégorie, description, montant, devise USD/CDF, mode de paiement et note; consultation des totaux séparés par devise et suppression d'une saisie erronée.
+- Tableau de bord financier : ventes facturées, encaissements, créances clients, achats, règlements fournisseurs, dettes et dépenses, avec calculs séparés en USD et CDF. Le solde net présenté est un indicateur des flux saisis, pas un rapprochement bancaire.
 - Ventes multi-articles : contrôle du stock, liaison aux clients enregistrés, facture, historique et décrémentation atomique.
 - Paiements de factures : acomptes et paiements partiels, modes Espèces/Mobile Money/Banque/Carte, historique des règlements, solde restant et statut À crédit/Partiellement payée/Payée. Les paiements supérieurs au solde sont refusés.
 - Alertes lorsque quantité <= seuil minimum.
