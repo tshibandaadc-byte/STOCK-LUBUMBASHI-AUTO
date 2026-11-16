@@ -145,17 +145,25 @@ def movement():
         rows = db().execute("SELECT m.*,p.sku,p.name AS product_name FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 250").fetchall()
         return jsonify([dict(row) for row in rows])
     d=request.get_json() or {}
+    conn=db()
     try:
         pid=int(d["product_id"]); qty=int(d["quantity"]); kind=d["kind"]
         if qty<=0 or kind not in ("Entrée","Sortie"): raise ValueError()
-        conn=db(); p=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
-        if not p: return jsonify(ok=False,message="Pièce introuvable."),404
+        conn.execute("BEGIN IMMEDIATE")
+        p=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
+        if not p:
+            conn.rollback()
+            return jsonify(ok=False,message="Pièce introuvable."),404
         new=p["quantity"]+qty if kind=="Entrée" else p["quantity"]-qty
-        if new<0: return jsonify(ok=False,message="Stock insuffisant pour cette sortie."),400
+        if new<0:
+            conn.rollback()
+            return jsonify(ok=False,message="Stock insuffisant pour cette sortie."),400
         conn.execute("UPDATE products SET quantity=? WHERE id=?",(new,pid))
         conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",(pid,kind,qty,d.get("note",""),session["user"],stamp()))
         conn.commit(); return jsonify(ok=True,message=f"{kind} enregistrée.")
-    except (KeyError,ValueError): return jsonify(ok=False,message="Quantité ou type de mouvement invalide."),400
+    except (KeyError,ValueError,TypeError):
+        conn.rollback()
+        return jsonify(ok=False,message="Quantité ou type de mouvement invalide."),400
 
 @app.get("/api/customers")
 @login_required
