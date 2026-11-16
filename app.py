@@ -30,7 +30,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '', address TEXT DEFAULT '', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), kind TEXT NOT NULL CHECK(kind IN ('Entrée','Sortie')), quantity INTEGER NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sales(id INTEGER PRIMARY KEY, invoice TEXT UNIQUE NOT NULL, customer_id INTEGER REFERENCES customers(id), customer_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
-    CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL);\n    CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '', email TEXT DEFAULT '', address TEXT DEFAULT '', created_at TEXT NOT NULL);
     """)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         conn.execute("INSERT INTO users(username,password_hash) VALUES(?,?)", ("admin", generate_password_hash(os.environ.get("ADMIN_PASSWORD","Admin@12345"))))
@@ -162,7 +162,7 @@ def sale_create():
             p=conn.execute("SELECT * FROM products WHERE id=?",(int(item["product_id"]),)).fetchone()
             qty=int(item["quantity"])
             if not p or qty<=0 or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
-            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
+            if p["currency"] != d.get("currency","USD"): raise ValueError("La devise de la vente doit correspondre a celle de chaque article. Conversion automatique indisponible.")\n            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
         invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")
         conn.execute("INSERT INTO sales(invoice,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?)",(invoice,customer,total,d.get("currency","USD"),stamp(),session["user"]))
         sid=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -178,6 +178,64 @@ def sale_create():
 @login_required
 def sales_list():
     return jsonify([dict(x) for x in db().execute("SELECT * FROM sales ORDER BY id DESC LIMIT 100")])
+
+
+@app.route("/api/customers/<int:cid>", methods=["PUT","DELETE"])
+@login_required
+def customer_detail(cid):
+    conn=db()
+    if not conn.execute("SELECT id FROM customers WHERE id=?",(cid,)).fetchone():
+        return jsonify(ok=False,message="Client introuvable."),404
+    if request.method=="DELETE":
+        if conn.execute("SELECT 1 FROM sales WHERE customer_id=?",(cid,)).fetchone():
+            return jsonify(ok=False,message="Client lie a une vente; historique protege."),409
+        conn.execute("DELETE FROM customers WHERE id=?",(cid,)); conn.commit()
+        return jsonify(ok=True)
+    d=request.get_json() or {}; name=d.get("name","").strip()
+    if not name: return jsonify(ok=False,message="Le nom est obligatoire."),400
+    conn.execute("UPDATE customers SET name=?,phone=?,address=? WHERE id=?",(name,d.get("phone",""),d.get("address",""),cid)); conn.commit()
+    return jsonify(ok=True)
+
+@app.route("/api/suppliers", methods=["GET","POST"])
+@login_required
+def suppliers_api():
+    conn=db()
+    if request.method=="GET": return jsonify([dict(x) for x in conn.execute("SELECT * FROM suppliers ORDER BY name")])
+    d=request.get_json() or {}; name=d.get("name","").strip()
+    if not name: return jsonify(ok=False,message="Le nom du fournisseur est obligatoire."),400
+    conn.execute("INSERT INTO suppliers(name,phone,email,address,created_at) VALUES(?,?,?,?,?)",(name,d.get("phone",""),d.get("email",""),d.get("address",""),stamp())); conn.commit()
+    return jsonify(ok=True,message="Fournisseur enregistre.")
+
+@app.route("/api/suppliers/<int:sid>", methods=["PUT","DELETE"])
+@login_required
+def supplier_detail(sid):
+    conn=db()
+    if not conn.execute("SELECT id FROM suppliers WHERE id=?",(sid,)).fetchone(): return jsonify(ok=False,message="Fournisseur introuvable."),404
+    if request.method=="DELETE":
+        conn.execute("DELETE FROM suppliers WHERE id=?",(sid,)); conn.commit(); return jsonify(ok=True)
+    d=request.get_json() or {}; name=d.get("name","").strip()
+    if not name: return jsonify(ok=False,message="Le nom est obligatoire."),400
+    conn.execute("UPDATE suppliers SET name=?,phone=?,email=?,address=? WHERE id=?",(name,d.get("phone",""),d.get("email",""),d.get("address",""),sid)); conn.commit()
+    return jsonify(ok=True)
+
+@app.get("/api/reports")
+@login_required
+def reports_api():
+    conn=db()
+    monthly=conn.execute("SELECT substr(created_at,1,7) month,currency,ROUND(SUM(total),2) total,COUNT(*) count FROM sales GROUP BY month,currency ORDER BY month DESC LIMIT 24").fetchall()
+    categories=conn.execute("SELECT category,COUNT(*) products,SUM(quantity) quantity FROM products GROUP BY category ORDER BY quantity DESC").fetchall()
+    movements=conn.execute("SELECT kind,COUNT(*) operations,SUM(quantity) quantity FROM movements GROUP BY kind").fetchall()
+    return jsonify(monthly=[dict(x) for x in monthly],categories=[dict(x) for x in categories],movements=[dict(x) for x in movements])
+
+@app.post("/api/settings/password")
+@login_required
+def change_password():
+    d=request.get_json() or {}; old=d.get("current_password",""); new=d.get("new_password","")
+    if len(new)<12: return jsonify(ok=False,message="Le nouveau mot de passe doit contenir au moins 12 caracteres."),400
+    conn=db(); user=conn.execute("SELECT * FROM users WHERE username=?",(session["user"],)).fetchone()
+    if not user or not check_password_hash(user["password_hash"],old): return jsonify(ok=False,message="Mot de passe actuel incorrect."),400
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(new),user["id"])); conn.commit()
+    return jsonify(ok=True,message="Mot de passe modifie.")
 
 @app.route("/health")
 def health(): return jsonify(status="ok",application="StockPro Moto-Auto")
