@@ -595,14 +595,13 @@ def database_restore():
             "SELECT name FROM sqlite_master WHERE type='table'")}
         if not required.issubset(tables):
             raise ValueError("Le fichier ne contient pas une base StockPro complète.")
+        if source.execute("PRAGMA foreign_key_check").fetchone():
+            raise ValueError("La sauvegarde contient des relations invalides.")
         target = db()
         target.execute("PRAGMA foreign_keys=OFF")
         source.backup(target)
         target.commit()
         target.execute("PRAGMA foreign_keys=ON")
-        violations = target.execute("PRAGMA foreign_key_check").fetchall()
-        if violations:
-            raise ValueError("La sauvegarde contient des relations invalides.")
         return jsonify(ok=True, message="Base de données restaurée. Reconnectez-vous avec les comptes présents dans la sauvegarde.")
     except (sqlite3.DatabaseError, OSError, ValueError):
         return jsonify(ok=False, message="Restauration refusée : fichier invalide, incomplet ou endommagé."), 400
