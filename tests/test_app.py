@@ -59,6 +59,35 @@ class StockProTests(unittest.TestCase):
                        if p["id"] == product["id"])
         self.assertEqual(updated["quantity"], product["quantity"] - 2)
 
+    def test_sale_rejects_duplicate_lines_that_exceed_stock(self):
+        product = self.client.get("/api/products").get_json()[0]
+        half = product["quantity"] // 2 + 1
+        response = self.client.post("/api/sales", json={
+            "customer": "Client test", "currency": product["currency"],
+            "items": [
+                {"product_id": product["id"], "quantity": half},
+                {"product_id": product["id"], "quantity": half}
+            ]
+        })
+        self.assertEqual(response.status_code, 400)
+        unchanged = next(p for p in self.client.get("/api/products").get_json()
+                         if p["id"] == product["id"])
+        self.assertEqual(unchanged["quantity"], product["quantity"])
+
+    def test_sale_history_and_invoice_detail(self):
+        product = self.client.get("/api/products").get_json()[0]
+        created = self.client.post("/api/sales", json={
+            "customer": "Client facture", "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        self.assertEqual(created.status_code, 200)
+        sales = self.client.get("/api/sales").get_json()
+        self.assertEqual(len(sales), 1)
+        detail = self.client.get("/api/sales/" + str(sales[0]["id"]))
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.get_json()["sale"]["invoice"], created.get_json()["invoice"])
+        self.assertEqual(len(detail.get_json()["items"]), 1)
+
     def test_sale_rejects_currency_mismatch(self):
         product = self.client.get("/api/products").get_json()[0]
         other_currency = "CDF" if product["currency"] == "USD" else "USD"
