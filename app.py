@@ -1,7 +1,7 @@
-import os, sqlite3, secrets, csv, io, math
+import os, sqlite3, secrets, csv, io, math, tempfile
 from functools import wraps
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -10,6 +10,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     JSON_SORT_KEYS=False,
+    MAX_CONTENT_LENGTH=100 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
@@ -545,6 +546,69 @@ def finance_summary():
         }
     recent_expenses=conn.execute("SELECT category,description,amount,currency,created_at FROM expenses ORDER BY id DESC LIMIT 5").fetchall()
     return jsonify(currencies=result,recent_expenses=[dict(x) for x in recent_expenses])
+
+
+@app.get("/api/backup")
+@login_required
+def database_backup():
+    denied = admin_required()
+    if denied: return denied
+    with tempfile.TemporaryDirectory() as folder:
+        backup_path = os.path.join(folder, "stockpro-backup.db")
+        source = db()
+        destination = sqlite3.connect(backup_path)
+        try:
+            source.backup(destination)
+            destination.commit()
+        finally:
+            destination.close()
+        with open(backup_path, "rb") as backup_file:
+            payload = io.BytesIO(backup_file.read())
+    response = send_file(payload, mimetype="application/vnd.sqlite3",
+                         as_attachment=True, download_name="stockpro-backup.db")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.post("/api/backup/restore")
+@login_required
+def database_restore():
+    denied = admin_required()
+    if denied: return denied
+    uploaded = request.files.get("backup")
+    if not uploaded or not uploaded.filename:
+        return jsonify(ok=False, message="Sélectionnez un fichier de sauvegarde SQLite."), 400
+    temp_path = None
+    source = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="stockpro-restore-", suffix=".db", delete=False) as temp:
+            temp_path = temp.name
+            uploaded.save(temp)
+        source = sqlite3.connect("file:" + temp_path + "?mode=ro", uri=True)
+        check = source.execute("PRAGMA integrity_check").fetchone()
+        if not check or check[0] != "ok":
+            raise ValueError("La sauvegarde est endommagée.")
+        required = {"users","products","customers","movements","sales","sale_items",
+                    "suppliers","purchases","purchase_items","sale_payments",
+                    "purchase_payments","expenses"}
+        tables = {row[0] for row in source.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        if not required.issubset(tables):
+            raise ValueError("Le fichier ne contient pas une base StockPro complète.")
+        target = db()
+        target.execute("PRAGMA foreign_keys=OFF")
+        source.backup(target)
+        target.commit()
+        target.execute("PRAGMA foreign_keys=ON")
+        violations = target.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise ValueError("La sauvegarde contient des relations invalides.")
+        return jsonify(ok=True, message="Base de données restaurée. Reconnectez-vous avec les comptes présents dans la sauvegarde.")
+    except (sqlite3.DatabaseError, OSError, ValueError):
+        return jsonify(ok=False, message="Restauration refusée : fichier invalide, incomplet ou endommagé."), 400
+    finally:
+        if source is not None: source.close()
+        if temp_path and os.path.exists(temp_path): os.unlink(temp_path)
 
 
 @app.get("/api/reports")
