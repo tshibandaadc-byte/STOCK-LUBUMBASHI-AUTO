@@ -162,7 +162,8 @@ def sale_create():
             p=conn.execute("SELECT * FROM products WHERE id=?",(int(item["product_id"]),)).fetchone()
             qty=int(item["quantity"])
             if not p or qty<=0 or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
-            if p["currency"] != d.get("currency","USD"): raise ValueError("La devise de la vente doit correspondre a celle de chaque article. Conversion automatique indisponible.")\n            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
+            if p["currency"] != d.get("currency","USD"): raise ValueError("La devise de la vente doit correspondre a celle de chaque article. Conversion automatique indisponible.")
+            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
         invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")
         conn.execute("INSERT INTO sales(invoice,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?)",(invoice,customer,total,d.get("currency","USD"),stamp(),session["user"]))
         sid=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
