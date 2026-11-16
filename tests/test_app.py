@@ -117,6 +117,25 @@ class StockProTests(unittest.TestCase):
         self.assertEqual(len(self.client.get("/api/suppliers").get_json()), 1)
         self.assertEqual(self.client.get("/api/reports").status_code, 200)
 
+    def test_admin_can_create_and_list_users(self):
+        response = self.client.post("/api/users", json={
+            "username": "vendeur01", "password": "MotDePasseSolide123", "role": "Employé"
+        })
+        self.assertEqual(response.status_code, 200)
+        users = self.client.get("/api/users").get_json()
+        self.assertTrue(any(user["username"] == "vendeur01" for user in users))
+
+    def test_user_creation_rejects_weak_password(self):
+        response = self.client.post("/api/users", json={
+            "username": "vendeur02", "password": "court", "role": "Employé"
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_user_cannot_delete_own_account(self):
+        admin = self.client.get("/api/users").get_json()[0]
+        response = self.client.delete("/api/users/" + str(admin["id"]))
+        self.assertEqual(response.status_code, 400)
+
     def test_password_change_requires_current_password(self):
         response = self.client.post("/api/settings/password", json={
             "current_password": "incorrect", "new_password": "MotDePasseTresLong123"
