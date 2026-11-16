@@ -5,8 +5,8 @@ Application web locale de gestion des pièces de rechange (motos, vélos, voitur
 ## Fonctionnalités livrées dans cette première version
 - Connexion avec mot de passe haché et session.
 - Tableau de bord avec statistiques calculées depuis la base.
-- Gestion des pièces : ajout, modification, suppression protégée, recherche et export CSV de l'inventaire.
-- Entrées et sorties de stock avec contrôle des quantités et historique d'inventaire (250 dernières opérations).
+- Gestion des pièces : ajout, modification, suppression protégée lorsqu'un historique existe, recherche et export CSV de l'inventaire.
+- Entrées et sorties de stock avec contrôle des quantités et historique d'inventaire (250 dernières opérations); les ajustements depuis une fiche article sont également tracés.
 - Clients : création, consultation, modification et suppression protégée.
 - Comptes utilisateurs : création par l'administrateur, rôles Administrateur/Employé et suppression protégée.
 - Achats & réceptions : enregistrement des achats par fournisseur, coût d'achat, mise à jour du stock, historique et mouvements automatiques.
