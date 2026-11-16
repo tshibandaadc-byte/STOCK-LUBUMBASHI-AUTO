@@ -6,6 +6,7 @@ class StockProTests(unittest.TestCase):
         self.tmp = tempfile.NamedTemporaryFile(delete=False)
         self.tmp.close()
         app.config["TESTING"] = True
+        app.config["CSRF_ENABLED"] = False
         os.environ["DATABASE_PATH"] = self.tmp.name
         import app as module
         module.DB_PATH = self.tmp.name
@@ -32,6 +33,16 @@ class StockProTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SECRET_KEY", result.stderr)
+
+    def test_state_changing_request_requires_csrf_token(self):
+        app.config["CSRF_ENABLED"] = True
+        denied = self.client.post("/logout")
+        self.assertEqual(denied.status_code, 400)
+        with self.client.session_transaction() as session:
+            token = session["_csrf_token"]
+        accepted = self.client.post("/logout", headers={"X-CSRFToken": token})
+        self.assertEqual(accepted.status_code, 302)
+        app.config["CSRF_ENABLED"] = False
 
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
