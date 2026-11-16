@@ -125,7 +125,7 @@ def product_create():
         db().execute("INSERT INTO products(sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,supplier,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),quantity,minimum,purchase,sale,currency,d.get("supplier",""),stamp()))
         db().commit(); return jsonify(ok=True,message="Pièce ajoutée au stock.")
-    except (KeyError,ValueError,sqlite3.IntegrityError) as e: return jsonify(ok=False,message="Vérifiez les champs et assurez-vous que la référence est unique."),400
+    except (KeyError,ValueError,TypeError,sqlite3.IntegrityError) as e: return jsonify(ok=False,message="Vérifiez les champs et assurez-vous que la référence est unique."),400
 
 @app.route("/api/products/<int:pid>",methods=["PUT","DELETE"])
 @login_required
