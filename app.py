@@ -123,7 +123,6 @@ def product_detail(pid):
         conn.execute("DELETE FROM products WHERE id=?",(pid,)); conn.commit(); return jsonify(ok=True)
     d=request.get_json() or {}
     try:
-        conn.execute("UPDATE products SET sku=?,name=?,category=?,brand=?,quantity=?,min_stock=?,purchase_price=?,sale_price=?,currency=?,supplier=? WHERE id=?",
         quantity=int(d["quantity"]); minimum=int(d["min_stock"]); purchase=float(d["purchase_price"]); sale=float(d["sale_price"]); currency=d["currency"]
         if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
             raise ValueError("Quantités, prix ou devise invalides.")
