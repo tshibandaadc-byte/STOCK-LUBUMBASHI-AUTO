@@ -1,4 +1,4 @@
-import os, sqlite3, secrets
+import os, sqlite3, secrets, csv, io
 from functools import wraps
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
@@ -297,6 +297,18 @@ def change_password():
     if not user or not check_password_hash(user["password_hash"],old): return jsonify(ok=False,message="Mot de passe actuel incorrect."),400
     conn.execute("UPDATE users SET password_hash=? WHERE id=?",(generate_password_hash(new),user["id"])); conn.commit()
     return jsonify(ok=True,message="Mot de passe modifie.")
+
+@app.get("/api/export/products.csv")
+@login_required
+def export_products():
+    rows = db().execute("SELECT sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,supplier FROM products ORDER BY category,name").fetchall()
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Référence", "Pièce", "Catégorie", "Marque", "Stock", "Seuil minimum", "Prix achat", "Prix vente", "Devise", "Fournisseur"])
+    writer.writerows([tuple(row) for row in rows])
+    response = app.response_class("\ufeff" + output.getvalue(), mimetype="text/csv; charset=utf-8")
+    response.headers["Content-Disposition"] = 'attachment; filename="inventaire-stock-lubumbashi.csv"'
+    return response
 
 @app.route("/api/users", methods=["GET", "POST"])
 @login_required
