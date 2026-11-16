@@ -188,12 +188,17 @@ def alerts_list():
 @login_required
 def sale_create():
     d=request.get_json() or {}; items=d.get("items",[]); customer=(d.get("customer") or "Client comptoir").strip()
+    customer_id=d.get("customer_id") or None
     currency=d.get("currency","USD")
     if currency not in ("USD","CDF"): return jsonify(ok=False,message="Devise invalide : choisissez USD ou CDF."),400
     if not isinstance(items,list) or not items: return jsonify(ok=False,message="Ajoutez au moins une pièce à la vente."),400
     conn=db()
     try:
         conn.execute("BEGIN IMMEDIATE"); total=0; prepared=[]; quantities={}
+        if customer_id is not None:
+            customer_row=conn.execute("SELECT name FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+            if not customer_row: raise ValueError("Client sélectionné introuvable.")
+            customer=customer_row["name"]
         for item in items:
             pid=int(item["product_id"]); qty=int(item["quantity"])
             if qty<=0: raise ValueError("La quantité doit être supérieure à zéro.")
@@ -206,7 +211,7 @@ def sale_create():
             if price<0: raise ValueError("Le prix de vente ne peut pas être négatif.")
             total+=price*qty; prepared.append((p,qty,price))
         invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")+"-"+secrets.token_hex(2).upper()
-        conn.execute("INSERT INTO sales(invoice,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?)",(invoice,customer,total,d.get("currency","USD"),stamp(),session["user"]))
+        conn.execute("INSERT INTO sales(invoice,customer_id,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?,?)",(invoice,customer_id,customer,total,currency,stamp(),session["user"]))
         sid=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         for p,qty,price in prepared:
             conn.execute("INSERT INTO sale_items(sale_id,product_id,product_name,quantity,unit_price) VALUES(?,?,?,?,?)",(sid,p["id"],p["name"],qty,price))
