@@ -92,7 +92,7 @@ def dashboard():
     alerts=conn.execute("SELECT * FROM products WHERE quantity<=min_stock ORDER BY quantity ASC LIMIT 8").fetchall()
     movements=conn.execute("SELECT m.*,p.name product FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 8").fetchall()
     invoice=conn.execute("SELECT * FROM sales ORDER BY id DESC LIMIT 1").fetchone()
-    return render_template("index.html",stats=stats,categories=categories,alerts=alerts,movements=movements,invoice=invoice,user=session["user"])
+    return render_template("index.html",stats=stats,categories=categories,alerts=alerts,movements=movements,invoice=invoice,user=session["user"],role=session.get("role","Employé"))
 
 @app.get("/api/products")
 @login_required
