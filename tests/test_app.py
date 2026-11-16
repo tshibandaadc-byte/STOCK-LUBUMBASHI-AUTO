@@ -42,6 +42,45 @@ class StockProTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
 
+    def test_product_update_persists_valid_changes(self):
+        product = self.client.get("/api/products").get_json()[0]
+        response = self.client.put("/api/products/" + str(product["id"]), json={
+            "sku": product["sku"], "name": "Pièce modifiée", "category": product["category"],
+            "brand": "Test", "quantity": product["quantity"], "min_stock": product["min_stock"],
+            "purchase_price": product["purchase_price"], "sale_price": product["sale_price"],
+            "currency": product["currency"], "supplier": "Fournisseur test"
+        })
+        self.assertEqual(response.status_code, 200)
+        updated = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
+        self.assertEqual(updated["name"], "Pièce modifiée")
+
+    def test_customer_update_and_protected_delete(self):
+        self.client.post("/api/customers", json={"name": "Client initial"})
+        customer = self.client.get("/api/customers").get_json()[0]
+        updated = self.client.put("/api/customers/" + str(customer["id"]), json={
+            "name": "Client modifié", "phone": "+243000000", "address": "Lubumbashi"
+        })
+        self.assertEqual(updated.status_code, 200)
+        product = self.client.get("/api/products").get_json()[0]
+        self.client.post("/api/sales", json={
+            "customer_id": customer["id"], "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        deleted = self.client.delete("/api/customers/" + str(customer["id"]))
+        self.assertEqual(deleted.status_code, 409)
+
+    def test_supplier_update_and_delete(self):
+        self.client.post("/api/suppliers", json={"name": "Fournisseur initial"})
+        supplier = self.client.get("/api/suppliers").get_json()[0]
+        updated = self.client.put("/api/suppliers/" + str(supplier["id"]), json={
+            "name": "Fournisseur modifié", "phone": "+243000000",
+            "email": "test@example.com", "address": "Lubumbashi"
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(self.client.get("/api/suppliers").get_json()[0]["name"], "Fournisseur modifié")
+        deleted = self.client.delete("/api/suppliers/" + str(supplier["id"]))
+        self.assertEqual(deleted.status_code, 200)
+
     def test_stock_entry_and_exit(self):
         product_id = self.client.get("/api/products").get_json()[0]["id"]
         entry = self.client.post("/api/movements", json={
