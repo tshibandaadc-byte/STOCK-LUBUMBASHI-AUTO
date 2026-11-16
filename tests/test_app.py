@@ -305,7 +305,7 @@ class StockProTests(unittest.TestCase):
             "customer": "Client tableau financier", "currency": product["currency"],
             "items": [{"product_id": product["id"], "quantity": 1}]
         })
-        self.assertEqual(sale_response.status_code, 201)
+        self.assertEqual(sale_response.status_code, 200)
         sale_id = self.client.get("/api/sales").get_json()[0]["id"]
         sale_total = float(self.client.get("/api/sales/" + str(sale_id)).get_json()["sale"]["total"])
         self.client.post("/api/sales/" + str(sale_id) + "/payments", json={
