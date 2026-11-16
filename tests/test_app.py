@@ -53,6 +53,12 @@ class StockProTests(unittest.TestCase):
         })
         self.assertEqual(exit_response.status_code, 200)
 
+    def test_inventory_csv_export_requires_login_and_returns_csv(self):
+        response = self.client.get("/api/export/products.csv")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/csv", response.content_type)
+        self.assertIn("Référence".encode("utf-8"), response.data)
+
     def test_inventory_ledger_lists_stock_movements(self):
         product_id = self.client.get("/api/products").get_json()[0]["id"]
         self.client.post("/api/movements", json={
