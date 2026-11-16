@@ -134,6 +134,12 @@ class StockProTests(unittest.TestCase):
         users = self.client.get("/api/users").get_json()
         self.assertTrue(any(user["username"] == "vendeur01" for user in users))
 
+    def test_employee_cannot_manage_users(self):
+        with self.client.session_transaction() as session:
+            session["role"] = "Employé"
+        response = self.client.get("/api/users")
+        self.assertEqual(response.status_code, 403)
+
     def test_user_creation_rejects_weak_password(self):
         response = self.client.post("/api/users", json={
             "username": "vendeur02", "password": "court", "role": "Employé"
