@@ -126,19 +126,32 @@ def product_detail(pid):
     row=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
     if not row: return jsonify(ok=False,message="Pièce introuvable."),404
     if request.method=="DELETE":
-        if conn.execute("SELECT 1 FROM sale_items WHERE product_id=?",(pid,)).fetchone(): return jsonify(ok=False,message="Suppression impossible : cette pièce figure dans une vente. Mettez son stock à zéro."),409
+        if conn.execute("SELECT 1 FROM sale_items WHERE product_id=?",(pid,)).fetchone() or conn.execute("SELECT 1 FROM movements WHERE product_id=?",(pid,)).fetchone():
+            return jsonify(ok=False,message="Suppression impossible : cette pièce possède un historique de ventes ou de mouvements. Conservez sa fiche pour préserver la traçabilité."),409
         conn.execute("DELETE FROM products WHERE id=?",(pid,)); conn.commit(); return jsonify(ok=True)
-    d=request.get_json() or {}
+    d=request.get_json(silent=True) or {}
     try:
         quantity=int(d["quantity"]); minimum=int(d["min_stock"]); purchase=float(d["purchase_price"]); sale=float(d["sale_price"]); currency=d["currency"]
         if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
             raise ValueError("Quantités, prix ou devise invalides.")
-        if not d["sku"].strip() or not d["name"].strip() or not d["category"].strip():
+        sku=str(d["sku"]).strip(); name=str(d["name"]).strip(); category=str(d["category"]).strip()
+        if not sku or not name or not category:
             raise ValueError("Référence, nom et catégorie sont obligatoires.")
+        conn.execute("BEGIN IMMEDIATE")
+        current=conn.execute("SELECT quantity FROM products WHERE id=?",(pid,)).fetchone()
+        if not current:
+            conn.rollback()
+            return jsonify(ok=False,message="Pièce introuvable."),404
+        delta=quantity-current["quantity"]
         conn.execute("UPDATE products SET sku=?,name=?,category=?,brand=?,quantity=?,min_stock=?,purchase_price=?,sale_price=?,currency=?,supplier=? WHERE id=?",
-        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),quantity,minimum,purchase,sale,currency,d.get("supplier",""),pid))
-        conn.commit(); return jsonify(ok=True,message="Pièce modifiée.")
-    except (KeyError,ValueError,sqlite3.IntegrityError): return jsonify(ok=False,message="Données invalides ou référence déjà utilisée."),400
+        (sku,name,category,d.get("brand",""),quantity,minimum,purchase,sale,currency,d.get("supplier",""),pid))
+        if delta:
+            conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",
+                         (pid,"Entrée" if delta>0 else "Sortie",abs(delta),"Ajustement manuel depuis la fiche article",session["user"],stamp()))
+        conn.commit(); return jsonify(ok=True,message="Pièce modifiée. Tout ajustement de stock a été enregistré dans l'inventaire.")
+    except (KeyError,ValueError,TypeError,sqlite3.IntegrityError):
+        conn.rollback()
+        return jsonify(ok=False,message="Données invalides ou référence déjà utilisée."),400
 
 @app.route("/api/movements", methods=["GET", "POST"])
 @login_required
