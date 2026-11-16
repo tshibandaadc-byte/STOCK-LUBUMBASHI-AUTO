@@ -53,6 +53,15 @@ class StockProTests(unittest.TestCase):
         })
         self.assertEqual(exit_response.status_code, 200)
 
+    def test_inventory_ledger_lists_stock_movements(self):
+        product_id = self.client.get("/api/products").get_json()[0]["id"]
+        self.client.post("/api/movements", json={
+            "product_id": product_id, "quantity": 4, "kind": "Entrée", "note": "Réception fournisseur"
+        })
+        response = self.client.get("/api/movements")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any(row["note"] == "Réception fournisseur" for row in response.get_json()))
+
     def test_prevent_negative_stock(self):
         product = self.client.get("/api/products").get_json()[0]
         response = self.client.post("/api/movements", json={
