@@ -54,6 +54,21 @@ class StockProTests(unittest.TestCase):
         updated = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
         self.assertEqual(updated["name"], "Pièce modifiée")
 
+    def test_manual_product_stock_adjustment_is_audited(self):
+        product = self.client.get("/api/products").get_json()[0]
+        new_quantity = product["quantity"] + 6
+        response = self.client.put("/api/products/" + str(product["id"]), json={
+            "sku": product["sku"], "name": product["name"], "category": product["category"],
+            "brand": product["brand"], "quantity": new_quantity, "min_stock": product["min_stock"],
+            "purchase_price": product["purchase_price"], "sale_price": product["sale_price"],
+            "currency": product["currency"], "supplier": product["supplier"]
+        })
+        self.assertEqual(response.status_code, 200)
+        movements = self.client.get("/api/movements").get_json()
+        self.assertTrue(any(m["note"] == "Ajustement manuel depuis la fiche article" and m["quantity"] == 6 for m in movements))
+        deleted = self.client.delete("/api/products/" + str(product["id"]))
+        self.assertEqual(deleted.status_code, 409)
+
     def test_customer_update_and_protected_delete(self):
         self.client.post("/api/customers", json={"name": "Client initial"})
         customer = self.client.get("/api/customers").get_json()[0]
