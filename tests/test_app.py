@@ -241,6 +241,64 @@ class StockProTests(unittest.TestCase):
         unchanged = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
         self.assertEqual(unchanged["quantity"], before)
 
+    def test_purchase_supplier_payment_partial_and_full(self):
+        self.client.post("/api/suppliers", json={"name": "Fournisseur à régler"})
+        supplier_id = self.client.get("/api/suppliers").get_json()[0]["id"]
+        product = self.client.get("/api/products").get_json()[0]
+        purchase = self.client.post("/api/purchases", json={
+            "supplier_id": supplier_id, "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 2, "unit_cost": 10}]
+        })
+        self.assertEqual(purchase.status_code, 201)
+        purchase_id = self.client.get("/api/purchases").get_json()[0]["id"]
+        total = self.client.get("/api/purchases/" + str(purchase_id)).get_json()["purchase"]["total"]
+        first = self.client.post("/api/purchases/" + str(purchase_id) + "/payments", json={
+            "amount": 5, "method": "Banque", "note": "Acompte"
+        })
+        self.assertEqual(first.status_code, 201)
+        detail = self.client.get("/api/purchases/" + str(purchase_id)).get_json()
+        self.assertEqual(detail["payment_summary"]["status"], "Partiellement payé")
+        self.assertEqual(detail["payment_summary"]["balance"], round(total - 5, 2))
+        final = self.client.post("/api/purchases/" + str(purchase_id) + "/payments", json={
+            "amount": round(total - 5, 2), "method": "Mobile Money"
+        })
+        self.assertEqual(final.status_code, 201)
+        detail = self.client.get("/api/purchases/" + str(purchase_id)).get_json()
+        self.assertEqual(detail["payment_summary"]["balance"], 0)
+        self.assertEqual(detail["payment_summary"]["status"], "Payé")
+
+    def test_supplier_payment_rejects_overpayment(self):
+        product = self.client.get("/api/products").get_json()[0]
+        self.client.post("/api/purchases", json={
+            "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1, "unit_cost": 3}]
+        })
+        purchase_id = self.client.get("/api/purchases").get_json()[0]["id"]
+        total = self.client.get("/api/purchases/" + str(purchase_id)).get_json()["purchase"]["total"]
+        response = self.client.post("/api/purchases/" + str(purchase_id) + "/payments", json={
+            "amount": total + 1, "method": "Espèces"
+        })
+        self.assertEqual(response.status_code, 400)
+
+    def test_expense_create_list_and_validate(self):
+        created = self.client.post("/api/expenses", json={
+            "category": "Transport", "description": "Livraison pièces",
+            "amount": 25.5, "currency": "USD", "method": "Mobile Money"
+        })
+        self.assertEqual(created.status_code, 201)
+        listing = self.client.get("/api/expenses").get_json()
+        self.assertEqual(len(listing["expenses"]), 1)
+        self.assertEqual(listing["expenses"][0]["amount"], 25.5)
+        self.assertEqual(listing["totals"][0]["currency"], "USD")
+        invalid = self.client.post("/api/expenses", json={
+            "category": "Autre", "description": "Montant invalide",
+            "amount": float("nan"), "currency": "USD", "method": "Espèces"
+        })
+        self.assertEqual(invalid.status_code, 400)
+        deleted = self.client.delete("/api/expenses/" + str(listing["expenses"][0]["id"]))
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(len(self.client.get("/api/expenses").get_json()["expenses"]), 0)
+
     def test_supplier_create_and_reports(self):
         response = self.client.post("/api/suppliers", json={"name": "Fournisseur test"})
         self.assertEqual(response.status_code, 200)
