@@ -178,6 +178,37 @@ class StockProTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
 
+    def test_purchase_receipt_increases_stock_and_records_history(self):
+        self.client.post("/api/suppliers", json={"name": "Grossiste Lubumbashi"})
+        supplier_id = self.client.get("/api/suppliers").get_json()[0]["id"]
+        product = self.client.get("/api/products").get_json()[0]
+        before = product["quantity"]
+        response = self.client.post("/api/purchases", json={
+            "supplier_id": supplier_id, "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 7, "unit_cost": 11.5}]
+        })
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.get_json()["reference"].startswith("ACH-"))
+        updated = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
+        self.assertEqual(updated["quantity"], before + 7)
+        self.assertEqual(updated["purchase_price"], 11.5)
+        purchases = self.client.get("/api/purchases").get_json()
+        self.assertEqual(len(purchases), 1)
+        detail = self.client.get("/api/purchases/" + str(purchases[0]["id"])).get_json()
+        self.assertEqual(detail["items"][0]["quantity"], 7)
+
+    def test_purchase_rejects_currency_mismatch_without_stock_change(self):
+        product = self.client.get("/api/products").get_json()[0]
+        before = product["quantity"]
+        wrong_currency = "CDF" if product["currency"] == "USD" else "USD"
+        response = self.client.post("/api/purchases", json={
+            "currency": wrong_currency,
+            "items": [{"product_id": product["id"], "quantity": 3, "unit_cost": 5}]
+        })
+        self.assertEqual(response.status_code, 400)
+        unchanged = next(p for p in self.client.get("/api/products").get_json() if p["id"] == product["id"])
+        self.assertEqual(unchanged["quantity"], before)
+
     def test_supplier_create_and_reports(self):
         response = self.client.post("/api/suppliers", json={"name": "Fournisseur test"})
         self.assertEqual(response.status_code, 200)
