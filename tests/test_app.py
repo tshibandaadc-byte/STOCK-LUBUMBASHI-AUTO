@@ -343,6 +343,32 @@ class StockProTests(unittest.TestCase):
         users = self.client.get("/api/users").get_json()
         self.assertTrue(any(user["username"] == "vendeur01" for user in users))
 
+    def test_employee_is_blocked_from_sensitive_admin_operations(self):
+        with self.client.session_transaction() as session:
+            session["role"] = "Employé"
+        checks = [
+            self.client.post("/api/products", json={"sku": "EMP-01", "name": "Test", "category": "Test"}),
+            self.client.post("/api/movements", json={"product_id": 1, "quantity": 1, "kind": "Entrée"}),
+            self.client.post("/api/purchases", json={"items": []}),
+            self.client.post("/api/expenses", json={"category": "Test", "description": "Test", "amount": 1, "currency": "USD"}),
+            self.client.get("/api/expenses"),
+            self.client.get("/api/suppliers"),
+            self.client.get("/api/finance/summary"),
+            self.client.get("/api/reports"),
+            self.client.get("/api/export/products.csv"),
+        ]
+        self.assertTrue(all(response.status_code == 403 for response in checks))
+
+    def test_employee_can_still_create_a_sale(self):
+        with self.client.session_transaction() as session:
+            session["role"] = "Employé"
+        product = self.client.get("/api/products").get_json()[0]
+        response = self.client.post("/api/sales", json={
+            "customer": "Vente employé", "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        self.assertEqual(response.status_code, 200)
+
     def test_employee_cannot_manage_users(self):
         with self.client.session_transaction() as session:
             session["role"] = "Employé"
