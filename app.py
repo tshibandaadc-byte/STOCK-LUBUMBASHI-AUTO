@@ -138,9 +138,12 @@ def product_detail(pid):
         conn.commit(); return jsonify(ok=True,message="Pièce modifiée.")
     except (KeyError,ValueError,sqlite3.IntegrityError): return jsonify(ok=False,message="Données invalides ou référence déjà utilisée."),400
 
-@app.post("/api/movements")
+@app.route("/api/movements", methods=["GET", "POST"])
 @login_required
 def movement():
+    if request.method == "GET":
+        rows = db().execute("SELECT m.*,p.sku,p.name AS product_name FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 250").fetchall()
+        return jsonify([dict(row) for row in rows])
     d=request.get_json() or {}
     try:
         pid=int(d["product_id"]); qty=int(d["quantity"]); kind=d["kind"]
