@@ -7,15 +7,30 @@ from werkzeug.security import generate_password_hash, check_password_hash
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE, "stockpro.db"))
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+APP_ENV = os.environ.get("APP_ENV", "development").lower()
+PRODUCTION = APP_ENV == "production"
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if PRODUCTION and len(SECRET_KEY) < 32:
+    raise RuntimeError("En production, définissez SECRET_KEY avec au moins 32 caractères aléatoires.")
+app.secret_key = SECRET_KEY or secrets.token_hex(32)
 app.config.update(
     JSON_SORT_KEYS=False,
     MAX_CONTENT_LENGTH=100 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=PRODUCTION or os.environ.get("COOKIE_SECURE", "0") == "1",
     PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
 )
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if PRODUCTION:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 
 def db():
     if "db" not in g:
