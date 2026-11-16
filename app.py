@@ -7,8 +7,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE, "stockpro.db"))
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key-before-production")
-app.config["JSON_SORT_KEYS"] = False
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(
+    JSON_SORT_KEYS=False,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
+)
 
 def db():
     if "db" not in g:
@@ -55,6 +61,7 @@ def login():
         user=db().execute("SELECT * FROM users WHERE username=?",(request.form.get("username","").strip(),)).fetchone()
         if user and check_password_hash(user["password_hash"],request.form.get("password","")):
             session.clear(); session["user"]=user["username"]; session["role"]=user["role"]
+            session.permanent = True
             return redirect(url_for("dashboard"))
         flash("Identifiants incorrects. Réessayez.","error")
     return render_template("login.html")
@@ -94,8 +101,14 @@ def products_list():
 def product_create():
     d=request.get_json(silent=True) or request.form
     try:
+        quantity=int(d.get("quantity",0)); minimum=int(d.get("min_stock",5))
+        purchase=float(d.get("purchase_price",0)); sale=float(d.get("sale_price",0)); currency=d.get("currency","USD")
+        if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
+            raise ValueError("Quantités, prix ou devise invalides.")
+        if not d["sku"].strip() or not d["name"].strip() or not d["category"].strip():
+            raise ValueError("Référence, nom et catégorie sont obligatoires.")
         db().execute("INSERT INTO products(sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,supplier,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),int(d.get("quantity",0)),int(d.get("min_stock",5)),float(d.get("purchase_price",0)),float(d.get("sale_price",0)),d.get("currency","USD"),d.get("supplier",""),stamp()))
+        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),quantity,minimum,purchase,sale,currency,d.get("supplier",""),stamp()))
         db().commit(); return jsonify(ok=True,message="Pièce ajoutée au stock.")
     except (KeyError,ValueError,sqlite3.IntegrityError) as e: return jsonify(ok=False,message="Vérifiez les champs et assurez-vous que la référence est unique."),400
 
@@ -111,7 +124,13 @@ def product_detail(pid):
     d=request.get_json() or {}
     try:
         conn.execute("UPDATE products SET sku=?,name=?,category=?,brand=?,quantity=?,min_stock=?,purchase_price=?,sale_price=?,currency=?,supplier=? WHERE id=?",
-        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),int(d["quantity"]),int(d["min_stock"]),float(d["purchase_price"]),float(d["sale_price"]),d["currency"],d.get("supplier",""),pid))
+        quantity=int(d["quantity"]); minimum=int(d["min_stock"]); purchase=float(d["purchase_price"]); sale=float(d["sale_price"]); currency=d["currency"]
+        if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
+            raise ValueError("Quantités, prix ou devise invalides.")
+        if not d["sku"].strip() or not d["name"].strip() or not d["category"].strip():
+            raise ValueError("Référence, nom et catégorie sont obligatoires.")
+        conn.execute("UPDATE products SET sku=?,name=?,category=?,brand=?,quantity=?,min_stock=?,purchase_price=?,sale_price=?,currency=?,supplier=? WHERE id=?",
+        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),quantity,minimum,purchase,sale,currency,d.get("supplier",""),pid))
         conn.commit(); return jsonify(ok=True,message="Pièce modifiée.")
     except (KeyError,ValueError,sqlite3.IntegrityError): return jsonify(ok=False,message="Données invalides ou référence déjà utilisée."),400
 
