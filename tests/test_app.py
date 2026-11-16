@@ -97,6 +97,19 @@ class StockProTests(unittest.TestCase):
                          if p["id"] == product["id"])
         self.assertEqual(unchanged["quantity"], product["quantity"])
 
+    def test_sale_links_registered_customer(self):
+        customer = self.client.post("/api/customers", json={"name": "Client lié"}).get_json()
+        customer_id = self.client.get("/api/customers").get_json()[0]["id"]
+        product = self.client.get("/api/products").get_json()[0]
+        response = self.client.post("/api/sales", json={
+            "customer_id": customer_id, "currency": product["currency"],
+            "items": [{"product_id": product["id"], "quantity": 1}]
+        })
+        self.assertEqual(response.status_code, 200)
+        sale = self.client.get("/api/sales").get_json()[0]
+        self.assertEqual(sale["customer_id"], customer_id)
+        self.assertEqual(sale["customer_name"], "Client lié")
+
     def test_sale_history_and_invoice_detail(self):
         product = self.client.get("/api/products").get_json()[0]
         created = self.client.post("/api/sales", json={
