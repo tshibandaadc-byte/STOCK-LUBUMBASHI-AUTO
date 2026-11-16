@@ -22,6 +22,20 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=60 * 60 * 8,
 )
 
+@app.before_request
+def protect_state_changes():
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and app.config.get("CSRF_ENABLED", True):
+        supplied = request.headers.get("X-CSRFToken") or request.form.get("_csrf_token", "")
+        if not supplied or not secrets.compare_digest(str(token), str(supplied)):
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify(ok=False, message="Session de sécurité expirée. Rechargez la page puis réessayez."), 400
+            return "Requête refusée : jeton de sécurité CSRF manquant ou invalide.", 400
+
+
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
