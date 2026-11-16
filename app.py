@@ -37,6 +37,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), kind TEXT NOT NULL CHECK(kind IN ('Entrée','Sortie')), quantity INTEGER NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sales(id INTEGER PRIMARY KEY, invoice TEXT UNIQUE NOT NULL, customer_id INTEGER REFERENCES customers(id), customer_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
     CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL);\n    CREATE TABLE IF NOT EXISTS suppliers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '', email TEXT DEFAULT '', address TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS purchases(id INTEGER PRIMARY KEY, reference TEXT UNIQUE NOT NULL, supplier_id INTEGER REFERENCES suppliers(id), supplier_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
+    CREATE TABLE IF NOT EXISTS purchase_items(id INTEGER PRIMARY KEY, purchase_id INTEGER NOT NULL REFERENCES purchases(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity>0), unit_cost REAL NOT NULL CHECK(unit_cost>=0));
     """)
     if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
         conn.execute("INSERT INTO users(username,password_hash) VALUES(?,?)", ("admin", generate_password_hash(os.environ.get("ADMIN_PASSWORD","Admin@12345"))))
@@ -256,6 +258,78 @@ def customer_detail(cid):
     if not name: return jsonify(ok=False,message="Le nom est obligatoire."),400
     conn.execute("UPDATE customers SET name=?,phone=?,address=? WHERE id=?",(name,d.get("phone",""),d.get("address",""),cid)); conn.commit()
     return jsonify(ok=True)
+
+@app.route("/api/purchases", methods=["GET", "POST"])
+@login_required
+def purchases_api():
+    conn = db()
+    if request.method == "GET":
+        rows = conn.execute("SELECT * FROM purchases ORDER BY id DESC LIMIT 100").fetchall()
+        return jsonify([dict(row) for row in rows])
+    data = request.get_json(silent=True) or {}
+    items = data.get("items", [])
+    currency = data.get("currency", "USD")
+    supplier_id = data.get("supplier_id") or None
+    if currency not in ("USD", "CDF") or not isinstance(items, list) or not items:
+        return jsonify(ok=False, message="Choisissez une devise et ajoutez au moins un article."), 400
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        supplier_name = "Fournisseur divers"
+        if supplier_id is not None:
+            supplier = conn.execute("SELECT name FROM suppliers WHERE id=?", (int(supplier_id),)).fetchone()
+            if not supplier:
+                raise ValueError("Fournisseur introuvable.")
+            supplier_name = supplier["name"]
+        quantities = {}
+        for item in items:
+            pid = int(item["product_id"])
+            qty = int(item["quantity"])
+            cost = float(item["unit_cost"])
+            if qty <= 0 or cost < 0:
+                raise ValueError("Quantité et coût d'achat invalides.")
+            if pid in quantities:
+                quantities[pid][0] += qty
+                if quantities[pid][1] != cost:
+                    raise ValueError("Un même article ne peut pas avoir deux coûts différents dans un achat.")
+            else:
+                quantities[pid] = [qty, cost]
+        prepared = []
+        total = 0
+        for pid, (qty, cost) in quantities.items():
+            product = conn.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+            if not product:
+                raise ValueError("Article introuvable.")
+            if product["currency"] != currency:
+                raise ValueError("La devise de l'achat doit correspondre à celle de l'article.")
+            prepared.append((product, qty, cost))
+            total += qty * cost
+        reference = "ACH-" + datetime.now().strftime("%Y%m%d%H%M%S") + "-" + secrets.token_hex(2).upper()
+        conn.execute("INSERT INTO purchases(reference,supplier_id,supplier_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?,?)",
+                     (reference, supplier_id, supplier_name, total, currency, stamp(), session["user"]))
+        purchase_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for product, qty, cost in prepared:
+            conn.execute("INSERT INTO purchase_items(purchase_id,product_id,product_name,quantity,unit_cost) VALUES(?,?,?,?,?)",
+                         (purchase_id, product["id"], product["name"], qty, cost))
+            conn.execute("UPDATE products SET quantity=quantity+?,purchase_price=?,supplier=? WHERE id=?",
+                         (qty, cost, supplier_name, product["id"]))
+            conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",
+                         (product["id"], "Entrée", qty, "Achat " + reference, session["user"], stamp()))
+        conn.commit()
+        return jsonify(ok=True, message="Achat enregistré et stock mis à jour.", reference=reference, total=round(total, 2)), 201
+    except (ValueError, KeyError, TypeError, sqlite3.IntegrityError) as error:
+        conn.rollback()
+        return jsonify(ok=False, message=str(error) or "Achat invalide."), 400
+
+@app.get("/api/purchases/<int:purchase_id>")
+@login_required
+def purchase_detail(purchase_id):
+    conn = db()
+    purchase = conn.execute("SELECT * FROM purchases WHERE id=?", (purchase_id,)).fetchone()
+    if not purchase:
+        return jsonify(ok=False, message="Achat introuvable."), 404
+    items = conn.execute("SELECT product_name,quantity,unit_cost,quantity*unit_cost AS subtotal FROM purchase_items WHERE purchase_id=? ORDER BY id",
+                         (purchase_id,)).fetchall()
+    return jsonify(purchase=dict(purchase), items=[dict(item) for item in items])
 
 @app.route("/api/suppliers", methods=["GET","POST"])
 @login_required
