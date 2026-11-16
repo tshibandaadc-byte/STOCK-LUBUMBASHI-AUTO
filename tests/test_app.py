@@ -28,6 +28,20 @@ class StockProTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreaterEqual(len(response.get_json()), 1)
 
+    def test_product_rejects_negative_price_and_invalid_currency(self):
+        response = self.client.post("/api/products", json={
+            "sku": "BAD-001", "name": "Produit invalide", "category": "Test",
+            "quantity": 1, "min_stock": 0, "purchase_price": -2,
+            "sale_price": 5, "currency": "USD"
+        })
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post("/api/products", json={
+            "sku": "BAD-002", "name": "Produit invalide", "category": "Test",
+            "quantity": 1, "min_stock": 0, "purchase_price": 2,
+            "sale_price": 5, "currency": "EUR"
+        })
+        self.assertEqual(response.status_code, 400)
+
     def test_stock_entry_and_exit(self):
         product_id = self.client.get("/api/products").get_json()[0]["id"]
         entry = self.client.post("/api/movements", json={
