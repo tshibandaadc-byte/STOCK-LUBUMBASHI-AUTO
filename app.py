@@ -175,6 +175,20 @@ def sale_create():
     except (ValueError,KeyError,TypeError) as e:
         conn.rollback(); return jsonify(ok=False,message=str(e) or "Vente invalide."),400
 
+@app.get("/api/sales/<int:sale_id>")
+@login_required
+def sale_detail(sale_id):
+    conn = db()
+    sale = conn.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
+    if not sale:
+        return jsonify(ok=False, message="Facture introuvable."), 404
+    items = conn.execute(
+        "SELECT product_name, quantity, unit_price, quantity*unit_price AS subtotal "
+        "FROM sale_items WHERE sale_id=? ORDER BY id", (sale_id,)
+    ).fetchall()
+    return jsonify(sale=dict(sale), items=[dict(item) for item in items])
+
+
 @app.get("/api/sales")
 @login_required
 def sales_list():
