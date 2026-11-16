@@ -1,4 +1,4 @@
-import os, tempfile, unittest
+import os, tempfile, unittest, io
 from app import app, init_db
 
 class StockProTests(unittest.TestCase):
@@ -18,6 +18,37 @@ class StockProTests(unittest.TestCase):
 
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    def test_admin_can_download_and_restore_database_backup(self):
+        original = self.client.get("/api/products").get_json()
+        backup = self.client.get("/api/backup")
+        self.assertEqual(backup.status_code, 200)
+        self.assertIn("stockpro-backup.db", backup.headers.get("Content-Disposition", ""))
+        self.assertTrue(backup.data.startswith(b"SQLite format 3"))
+        self.client.delete("/api/products/" + str(original[0]["id"]))
+        self.assertEqual(len(self.client.get("/api/products").get_json()), len(original) - 1)
+        restored = self.client.post("/api/backup/restore", data={
+            "backup": (io.BytesIO(backup.data), "stockpro-backup.db")
+        }, content_type="multipart/form-data")
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(len(self.client.get("/api/products").get_json()), len(original))
+
+    def test_restore_rejects_invalid_file_without_changing_database(self):
+        before = len(self.client.get("/api/products").get_json())
+        response = self.client.post("/api/backup/restore", data={
+            "backup": (io.BytesIO(b"not a database"), "bad.db")
+        }, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(len(self.client.get("/api/products").get_json()), before)
+
+    def test_employee_cannot_backup_or_restore_database(self):
+        with self.client.session_transaction() as session:
+            session["role"] = "Employé"
+        self.assertEqual(self.client.get("/api/backup").status_code, 403)
+        response = self.client.post("/api/backup/restore", data={
+            "backup": (io.BytesIO(b"fake"), "backup.db")
+        }, content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 403)
 
     def test_dashboard_requires_login(self):
         client = app.test_client()
