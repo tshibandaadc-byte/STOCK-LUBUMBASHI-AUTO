@@ -1,4 +1,4 @@
-import os, tempfile, unittest, io
+import os, tempfile, unittest, io, subprocess, sys
 from app import app, init_db
 
 class StockProTests(unittest.TestCase):
@@ -15,6 +15,23 @@ class StockProTests(unittest.TestCase):
 
     def tearDown(self):
         os.unlink(self.tmp.name)
+
+    def test_security_headers_are_present(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(response.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
+
+    def test_production_refuses_missing_secret_key(self):
+        env = os.environ.copy()
+        env.pop("SECRET_KEY", None)
+        env["APP_ENV"] = "production"
+        result = subprocess.run(
+            [sys.executable, "-c", "import app"],
+            env=env, capture_output=True, text=True, timeout=15
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECRET_KEY", result.stderr)
 
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
