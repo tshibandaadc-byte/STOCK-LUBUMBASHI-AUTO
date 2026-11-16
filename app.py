@@ -1,4 +1,4 @@
-import os, sqlite3, secrets, csv, io
+import os, sqlite3, secrets, csv, io, math
 from functools import wraps
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
@@ -57,6 +57,14 @@ def login_required(fn):
 
 def stamp(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+def whole_number(value):
+    if isinstance(value, bool):
+        raise ValueError("Une quantité entière est obligatoire.")
+    number = int(value)
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError("Une quantité entière est obligatoire.")
+    return number
+
 def admin_required():
     if session.get("role") not in ("Administrateur", "Admin"):
         return jsonify(ok=False, message="Accès réservé à l'administrateur."), 403
@@ -108,9 +116,9 @@ def products_list():
 def product_create():
     d=request.get_json(silent=True) or request.form
     try:
-        quantity=int(d.get("quantity",0)); minimum=int(d.get("min_stock",5))
+        quantity=whole_number(d.get("quantity",0)); minimum=whole_number(d.get("min_stock",5))
         purchase=float(d.get("purchase_price",0)); sale=float(d.get("sale_price",0)); currency=d.get("currency","USD")
-        if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
+        if quantity<0 or minimum<0 or not math.isfinite(purchase) or not math.isfinite(sale) or purchase<0 or sale<0 or currency not in ("USD","CDF"):
             raise ValueError("Quantités, prix ou devise invalides.")
         if not d["sku"].strip() or not d["name"].strip() or not d["category"].strip():
             raise ValueError("Référence, nom et catégorie sont obligatoires.")
@@ -131,8 +139,8 @@ def product_detail(pid):
         conn.execute("DELETE FROM products WHERE id=?",(pid,)); conn.commit(); return jsonify(ok=True)
     d=request.get_json(silent=True) or {}
     try:
-        quantity=int(d["quantity"]); minimum=int(d["min_stock"]); purchase=float(d["purchase_price"]); sale=float(d["sale_price"]); currency=d["currency"]
-        if quantity<0 or minimum<0 or purchase<0 or sale<0 or currency not in ("USD","CDF"):
+        quantity=whole_number(d["quantity"]); minimum=whole_number(d["min_stock"]); purchase=float(d["purchase_price"]); sale=float(d["sale_price"]); currency=d["currency"]
+        if quantity<0 or minimum<0 or not math.isfinite(purchase) or not math.isfinite(sale) or purchase<0 or sale<0 or currency not in ("USD","CDF"):
             raise ValueError("Quantités, prix ou devise invalides.")
         sku=str(d["sku"]).strip(); name=str(d["name"]).strip(); category=str(d["category"]).strip()
         if not sku or not name or not category:
@@ -167,7 +175,7 @@ def movement():
     d=request.get_json() or {}
     conn=db()
     try:
-        pid=int(d["product_id"]); qty=int(d["quantity"]); kind=d["kind"]
+        pid=int(d["product_id"]); qty=whole_number(d["quantity"]); kind=d["kind"]
         if qty<=0 or kind not in ("Entrée","Sortie"): raise ValueError()
         conn.execute("BEGIN IMMEDIATE")
         p=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
@@ -220,7 +228,7 @@ def sale_create():
             if not customer_row: raise ValueError("Client sélectionné introuvable.")
             customer=customer_row["name"]
         for item in items:
-            pid=int(item["product_id"]); qty=int(item["quantity"])
+            pid=int(item["product_id"]); qty=whole_number(item["quantity"])
             if qty<=0: raise ValueError("La quantité doit être supérieure à zéro.")
             quantities[pid]=quantities.get(pid,0)+qty
         for pid,qty in quantities.items():
@@ -228,7 +236,7 @@ def sale_create():
             if not p or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
             if p["currency"] != currency: raise ValueError("La devise de la vente doit correspondre à celle de chaque article. Conversion automatique indisponible.")
             price=float(p["sale_price"])
-            if price<0: raise ValueError("Le prix de vente ne peut pas être négatif.")
+            if not math.isfinite(price) or price<0: raise ValueError("Le prix de vente doit être un montant valide.")
             total+=price*qty; prepared.append((p,qty,price))
         invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")+"-"+secrets.token_hex(2).upper()
         conn.execute("INSERT INTO sales(invoice,customer_id,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?,?)",(invoice,customer_id,customer,total,currency,stamp(),session["user"]))
