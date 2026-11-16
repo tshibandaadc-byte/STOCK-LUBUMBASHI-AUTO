@@ -153,18 +153,25 @@ def alerts_list():
 @app.post("/api/sales")
 @login_required
 def sale_create():
-    d=request.get_json() or {}; items=d.get("items",[]); customer=d.get("customer","Client comptoir").strip()
-    if not items: return jsonify(ok=False,message="Ajoutez au moins une pièce à la vente."),400
+    d=request.get_json() or {}; items=d.get("items",[]); customer=(d.get("customer") or "Client comptoir").strip()
+    currency=d.get("currency","USD")
+    if currency not in ("USD","CDF"): return jsonify(ok=False,message="Devise invalide : choisissez USD ou CDF."),400
+    if not isinstance(items,list) or not items: return jsonify(ok=False,message="Ajoutez au moins une pièce à la vente."),400
     conn=db()
     try:
-        conn.execute("BEGIN IMMEDIATE"); total=0; prepared=[]
+        conn.execute("BEGIN IMMEDIATE"); total=0; prepared=[]; quantities={}
         for item in items:
-            p=conn.execute("SELECT * FROM products WHERE id=?",(int(item["product_id"]),)).fetchone()
-            qty=int(item["quantity"])
-            if not p or qty<=0 or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
-            if p["currency"] != d.get("currency","USD"): raise ValueError("La devise de la vente doit correspondre a celle de chaque article. Conversion automatique indisponible.")
-            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
-        invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")
+            pid=int(item["product_id"]); qty=int(item["quantity"])
+            if qty<=0: raise ValueError("La quantité doit être supérieure à zéro.")
+            quantities[pid]=quantities.get(pid,0)+qty
+        for pid,qty in quantities.items():
+            p=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
+            if not p or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
+            if p["currency"] != currency: raise ValueError("La devise de la vente doit correspondre à celle de chaque article. Conversion automatique indisponible.")
+            price=float(p["sale_price"])
+            if price<0: raise ValueError("Le prix de vente ne peut pas être négatif.")
+            total+=price*qty; prepared.append((p,qty,price))
+        invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")+"-"+secrets.token_hex(2).upper()
         conn.execute("INSERT INTO sales(invoice,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?)",(invoice,customer,total,d.get("currency","USD"),stamp(),session["user"]))
         sid=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         for p,qty,price in prepared:
@@ -172,7 +179,7 @@ def sale_create():
             conn.execute("UPDATE products SET quantity=quantity-? WHERE id=?",(qty,p["id"]))
             conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",(p["id"],"Sortie",qty,f"Vente {invoice}",session["user"],stamp()))
         conn.commit(); return jsonify(ok=True,message="Vente enregistrée.",invoice=invoice,total=round(total,2))
-    except (ValueError,KeyError,TypeError) as e:
+    except (ValueError,KeyError,TypeError,sqlite3.IntegrityError) as e:
         conn.rollback(); return jsonify(ok=False,message=str(e) or "Vente invalide."),400
 
 @app.get("/api/sales/<int:sale_id>")
