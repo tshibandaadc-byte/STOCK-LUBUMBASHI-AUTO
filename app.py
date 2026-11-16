@@ -1,0 +1,188 @@
+import os, sqlite3, secrets
+from functools import wraps
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
+from werkzeug.security import generate_password_hash, check_password_hash
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(BASE, "stockpro.db"))
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key-before-production")
+app.config["JSON_SORT_KEYS"] = False
+
+def db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys=ON")
+    return g.db
+
+@app.teardown_appcontext
+def close_db(_=None):
+    conn = g.pop("db", None)
+    if conn: conn.close()
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'Administrateur');
+    CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, sku TEXT UNIQUE NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, brand TEXT DEFAULT '', quantity INTEGER NOT NULL DEFAULT 0 CHECK(quantity>=0), min_stock INTEGER NOT NULL DEFAULT 5 CHECK(min_stock>=0), purchase_price REAL NOT NULL DEFAULT 0, sale_price REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL DEFAULT 'USD', supplier TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS customers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, phone TEXT DEFAULT '', address TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS movements(id INTEGER PRIMARY KEY, product_id INTEGER NOT NULL REFERENCES products(id), kind TEXT NOT NULL CHECK(kind IN ('Entrée','Sortie')), quantity INTEGER NOT NULL, note TEXT DEFAULT '', user TEXT DEFAULT '', created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS sales(id INTEGER PRIMARY KEY, invoice TEXT UNIQUE NOT NULL, customer_id INTEGER REFERENCES customers(id), customer_name TEXT NOT NULL, total REAL NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, user TEXT DEFAULT '');
+    CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY, sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE, product_id INTEGER NOT NULL REFERENCES products(id), product_name TEXT NOT NULL, quantity INTEGER NOT NULL, unit_price REAL NOT NULL);
+    """)
+    if not conn.execute("SELECT id FROM users LIMIT 1").fetchone():
+        conn.execute("INSERT INTO users(username,password_hash) VALUES(?,?)", ("admin", generate_password_hash(os.environ.get("ADMIN_PASSWORD","Admin@12345"))))
+    if not conn.execute("SELECT id FROM products LIMIT 1").fetchone():
+        now=datetime.now().isoformat(timespec="seconds")
+        demo=[("MOTO-001","Pneu moto","Pneus","",35,5,18,28,"USD"),("VELO-001","Frein vélo","Freins","",22,5,4,8,"USD"),("AUTO-001","Batterie 12V","Batteries","",8,3,45,65,"USD"),("AUTO-002","Filtre à huile","Filtres","",14,5,6,10,"USD"),("MOTO-002","Moteur moto","Moteurs","",3,2,180,240,"USD"),("AUTO-003","Plaquettes de frein","Freins","",17,5,12,20,"USD")]
+        conn.executemany("INSERT INTO products(sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",[(a,b,c,d,e,f,g,h,i,now) for a,b,c,d,e,f,g,h,i in demo])
+    conn.commit(); conn.close()
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if "user" not in session: return redirect(url_for("login"))
+        return fn(*args, **kwargs)
+    return wrapped
+
+def stamp(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+    if request.method=="POST":
+        user=db().execute("SELECT * FROM users WHERE username=?",(request.form.get("username","").strip(),)).fetchone()
+        if user and check_password_hash(user["password_hash"],request.form.get("password","")):
+            session.clear(); session["user"]=user["username"]; session["role"]=user["role"]
+            return redirect(url_for("dashboard"))
+        flash("Identifiants incorrects. Réessayez.","error")
+    return render_template("login.html")
+
+@app.post("/logout")
+def logout():
+    session.clear(); return redirect(url_for("login"))
+
+@app.route("/")
+@login_required
+def dashboard():
+    conn=db()
+    stats={
+      "products":conn.execute("SELECT COUNT(*) n FROM products").fetchone()["n"],
+      "quantity":conn.execute("SELECT COALESCE(SUM(quantity),0) n FROM products").fetchone()["n"],
+      "entries":conn.execute("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE kind='Entrée' AND substr(created_at,1,7)=?",(datetime.now().strftime("%Y-%m"),)).fetchone()["n"],
+      "exits":conn.execute("SELECT COALESCE(SUM(quantity),0) n FROM movements WHERE kind='Sortie' AND substr(created_at,1,7)=?",(datetime.now().strftime("%Y-%m"),)).fetchone()["n"],
+      "alerts":conn.execute("SELECT COUNT(*) n FROM products WHERE quantity<=min_stock").fetchone()["n"],
+      "sales":conn.execute("SELECT COALESCE(SUM(total),0) n FROM sales WHERE substr(created_at,1,7)=?",(datetime.now().strftime("%Y-%m"),)).fetchone()["n"],
+      "customers":conn.execute("SELECT COUNT(*) n FROM customers").fetchone()["n"]
+    }
+    categories=conn.execute("SELECT category,COUNT(*) count,COALESCE(SUM(quantity),0) quantity FROM products GROUP BY category ORDER BY category").fetchall()
+    alerts=conn.execute("SELECT * FROM products WHERE quantity<=min_stock ORDER BY quantity ASC LIMIT 8").fetchall()
+    movements=conn.execute("SELECT m.*,p.name product FROM movements m JOIN products p ON p.id=m.product_id ORDER BY m.id DESC LIMIT 8").fetchall()
+    invoice=conn.execute("SELECT * FROM sales ORDER BY id DESC LIMIT 1").fetchone()
+    return render_template("index.html",stats=stats,categories=categories,alerts=alerts,movements=movements,invoice=invoice,user=session["user"])
+
+@app.get("/api/products")
+@login_required
+def products_list():
+    q=request.args.get("q","").strip()
+    rows=db().execute("SELECT * FROM products WHERE name LIKE ? OR sku LIKE ? OR category LIKE ? ORDER BY name", (f"%{q}%",)*3).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.post("/api/products")
+@login_required
+def product_create():
+    d=request.get_json(silent=True) or request.form
+    try:
+        db().execute("INSERT INTO products(sku,name,category,brand,quantity,min_stock,purchase_price,sale_price,currency,supplier,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),int(d.get("quantity",0)),int(d.get("min_stock",5)),float(d.get("purchase_price",0)),float(d.get("sale_price",0)),d.get("currency","USD"),d.get("supplier",""),stamp()))
+        db().commit(); return jsonify(ok=True,message="Pièce ajoutée au stock.")
+    except (KeyError,ValueError,sqlite3.IntegrityError) as e: return jsonify(ok=False,message="Vérifiez les champs et assurez-vous que la référence est unique."),400
+
+@app.route("/api/products/<int:pid>",methods=["PUT","DELETE"])
+@login_required
+def product_detail(pid):
+    conn=db()
+    row=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
+    if not row: return jsonify(ok=False,message="Pièce introuvable."),404
+    if request.method=="DELETE":
+        if conn.execute("SELECT 1 FROM sale_items WHERE product_id=?",(pid,)).fetchone(): return jsonify(ok=False,message="Suppression impossible : cette pièce figure dans une vente. Mettez son stock à zéro."),409
+        conn.execute("DELETE FROM products WHERE id=?",(pid,)); conn.commit(); return jsonify(ok=True)
+    d=request.get_json() or {}
+    try:
+        conn.execute("UPDATE products SET sku=?,name=?,category=?,brand=?,quantity=?,min_stock=?,purchase_price=?,sale_price=?,currency=?,supplier=? WHERE id=?",
+        (d["sku"].strip(),d["name"].strip(),d["category"].strip(),d.get("brand",""),int(d["quantity"]),int(d["min_stock"]),float(d["purchase_price"]),float(d["sale_price"]),d["currency"],d.get("supplier",""),pid))
+        conn.commit(); return jsonify(ok=True,message="Pièce modifiée.")
+    except (KeyError,ValueError,sqlite3.IntegrityError): return jsonify(ok=False,message="Données invalides ou référence déjà utilisée."),400
+
+@app.post("/api/movements")
+@login_required
+def movement():
+    d=request.get_json() or {}
+    try:
+        pid=int(d["product_id"]); qty=int(d["quantity"]); kind=d["kind"]
+        if qty<=0 or kind not in ("Entrée","Sortie"): raise ValueError()
+        conn=db(); p=conn.execute("SELECT * FROM products WHERE id=?",(pid,)).fetchone()
+        if not p: return jsonify(ok=False,message="Pièce introuvable."),404
+        new=p["quantity"]+qty if kind=="Entrée" else p["quantity"]-qty
+        if new<0: return jsonify(ok=False,message="Stock insuffisant pour cette sortie."),400
+        conn.execute("UPDATE products SET quantity=? WHERE id=?",(new,pid))
+        conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",(pid,kind,qty,d.get("note",""),session["user"],stamp()))
+        conn.commit(); return jsonify(ok=True,message=f"{kind} enregistrée.")
+    except (KeyError,ValueError): return jsonify(ok=False,message="Quantité ou type de mouvement invalide."),400
+
+@app.get("/api/customers")
+@login_required
+def customers_list():
+    return jsonify([dict(x) for x in db().execute("SELECT * FROM customers ORDER BY name")])
+
+@app.post("/api/customers")
+@login_required
+def customer_create():
+    d=request.get_json() or {}
+    name=d.get("name","").strip()
+    if not name: return jsonify(ok=False,message="Le nom du client est obligatoire."),400
+    db().execute("INSERT INTO customers(name,phone,address,created_at) VALUES(?,?,?,?)",(name,d.get("phone",""),d.get("address",""),stamp())); db().commit()
+    return jsonify(ok=True,message="Client enregistré.")
+
+@app.get("/api/alerts")
+@login_required
+def alerts_list():
+    return jsonify([dict(x) for x in db().execute("SELECT * FROM products WHERE quantity<=min_stock ORDER BY quantity")])
+
+@app.post("/api/sales")
+@login_required
+def sale_create():
+    d=request.get_json() or {}; items=d.get("items",[]); customer=d.get("customer","Client comptoir").strip()
+    if not items: return jsonify(ok=False,message="Ajoutez au moins une pièce à la vente."),400
+    conn=db()
+    try:
+        conn.execute("BEGIN IMMEDIATE"); total=0; prepared=[]
+        for item in items:
+            p=conn.execute("SELECT * FROM products WHERE id=?",(int(item["product_id"]),)).fetchone()
+            qty=int(item["quantity"])
+            if not p or qty<=0 or p["quantity"]<qty: raise ValueError("Stock insuffisant ou pièce invalide.")
+            price=float(p["sale_price"]); total+=price*qty; prepared.append((p,qty,price))
+        invoice="FAC-"+datetime.now().strftime("%Y%m%d%H%M%S")
+        conn.execute("INSERT INTO sales(invoice,customer_name,total,currency,created_at,user) VALUES(?,?,?,?,?,?)",(invoice,customer,total,d.get("currency","USD"),stamp(),session["user"]))
+        sid=conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        for p,qty,price in prepared:
+            conn.execute("INSERT INTO sale_items(sale_id,product_id,product_name,quantity,unit_price) VALUES(?,?,?,?,?)",(sid,p["id"],p["name"],qty,price))
+            conn.execute("UPDATE products SET quantity=quantity-? WHERE id=?",(qty,p["id"]))
+            conn.execute("INSERT INTO movements(product_id,kind,quantity,note,user,created_at) VALUES(?,?,?,?,?,?)",(p["id"],"Sortie",qty,f"Vente {invoice}",session["user"],stamp()))
+        conn.commit(); return jsonify(ok=True,message="Vente enregistrée.",invoice=invoice,total=round(total,2))
+    except (ValueError,KeyError,TypeError) as e:
+        conn.rollback(); return jsonify(ok=False,message=str(e) or "Vente invalide."),400
+
+@app.get("/api/sales")
+@login_required
+def sales_list():
+    return jsonify([dict(x) for x in db().execute("SELECT * FROM sales ORDER BY id DESC LIMIT 100")])
+
+@app.route("/health")
+def health(): return jsonify(status="ok",application="StockPro Moto-Auto")
+
+with app.app_context(): init_db()
+
+if __name__=="__main__":
+    app.run(host="127.0.0.1",port=int(os.environ.get("PORT",5000)),debug=os.environ.get("FLASK_DEBUG")=="1")
