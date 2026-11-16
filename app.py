@@ -137,6 +137,11 @@ def product_detail(pid):
         sku=str(d["sku"]).strip(); name=str(d["name"]).strip(); category=str(d["category"]).strip()
         if not sku or not name or not category:
             raise ValueError("Référence, nom et catégorie sont obligatoires.")
+        if currency != row["currency"] and (
+            conn.execute("SELECT 1 FROM sale_items WHERE product_id=? LIMIT 1",(pid,)).fetchone()
+            or conn.execute("SELECT 1 FROM purchase_items WHERE product_id=? LIMIT 1",(pid,)).fetchone()
+        ):
+            raise ValueError("La devise ne peut pas être changée après des achats ou des ventes enregistrés.")
         conn.execute("BEGIN IMMEDIATE")
         current=conn.execute("SELECT quantity FROM products WHERE id=?",(pid,)).fetchone()
         if not current:
